@@ -1,0 +1,21 @@
+# Python cache and temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+ENV/
+
+# Project-specific input/output folders (avoid pushing large video files and generated reports)
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
