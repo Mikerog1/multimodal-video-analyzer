@@ -1,4 +1,11 @@
 import os
+import sys
+
+# Add the directory containing this file to PATH on Windows to allow OpenCV to locate the openh264 DLL
+if os.name == 'nt':
+    core_dir = os.path.abspath(os.path.dirname(__file__))
+    os.environ['PATH'] = core_dir + os.pathsep + os.environ.get('PATH', '')
+
 import time
 import cv2
 from PIL import Image
@@ -16,13 +23,24 @@ class VideoProcessor:
         """
         self.detector = detector
 
-    def process_video(self, video_path: str, output_dir: str, fps_sample: float) -> None:
+    def process_video(
+        self, 
+        video_path: str, 
+        output_dir: str, 
+        fps_sample: float,
+        codec: str = "mp4v",
+        resize_factor: float = 1.0,
+        save_sampled_only: bool = False
+    ) -> None:
         """Processes the video, running object detection, drawing overlays, and writing reports.
         
         Args:
             video_path: Path to the input video file.
             output_dir: Directory to save results.
             fps_sample: Inference frequency in frames per second.
+            codec: Codec for the output video.
+            resize_factor: Scaling factor for resolution.
+            save_sampled_only: If True, only saves the frames processed by the model.
         """
         # Open Video File
         cap = cv2.VideoCapture(video_path)
@@ -39,7 +57,19 @@ class VideoProcessor:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         duration = total_frames / video_fps if video_fps > 0 else 0
         
+        # Setup Output Resolution
+        out_width = int(width * resize_factor) if 0.1 <= resize_factor < 1.0 else width
+        out_height = int(height * resize_factor) if 0.1 <= resize_factor < 1.0 else height
+        
+        # Setup Output FPS
+        if save_sampled_only and fps_sample > 0:
+            out_fps = min(fps_sample, video_fps)
+        else:
+            out_fps = video_fps
+            
         print(f"[+] Video Properties: {width}x{height} | {video_fps:.2f} FPS | {total_frames} frames | {duration:.2f} seconds")
+        if resize_factor < 1.0 or save_sampled_only or codec != "mp4v":
+            print(f"[+] Output Options: Resolution={out_width}x{out_height} | Codec={codec} | FPS={out_fps:.2f} (sampled-only: {save_sampled_only})")
         
         # Setup Output Paths (Create a unique results folder)
         timestamp_str = time.strftime("%Y%m%d_%H%M")
@@ -48,8 +78,8 @@ class VideoProcessor:
         out_video_path = os.path.join(run_output_dir, f"{base_name}_analyzed.mp4")
         
         # Setup Video Writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out_writer = cv2.VideoWriter(out_video_path, fourcc, video_fps, (width, height))
+        fourcc = cv2.VideoWriter_fourcc(*codec)
+        out_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (out_width, out_height))
         
         # Calculate sampling intervals
         if fps_sample > 0:
@@ -125,19 +155,25 @@ class VideoProcessor:
                         sum_counts[k] += active_counts[k]
                     seconds_tracked += 1
             
-            # HUD overlay
-            annotated_frame = draw_overlays(
-                frame,
-                last_detected_boxes,
-                active_counts,
-                elapsed_sec,
-                duration,
-                model_name,
-                device
-            )
-            
-            # Write to Output Video
-            out_writer.write(annotated_frame)
+            # Only write frames that were sampled if save_sampled_only is True
+            if not save_sampled_only or should_infer:
+                # HUD overlay
+                annotated_frame = draw_overlays(
+                    frame,
+                    last_detected_boxes,
+                    active_counts,
+                    elapsed_sec,
+                    duration,
+                    model_name,
+                    device
+                )
+                
+                # Resize frame if factor is specified
+                if resize_factor < 1.0:
+                    annotated_frame = cv2.resize(annotated_frame, (out_width, out_height))
+                
+                # Write to Output Video
+                out_writer.write(annotated_frame)
             
         # Release resources
         cap.release()

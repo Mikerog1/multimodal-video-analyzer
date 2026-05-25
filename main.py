@@ -1,5 +1,11 @@
 import os
 import sys
+
+# Add core directory to PATH on Windows to allow OpenCV to locate the openh264 DLL
+if os.name == 'nt':
+    core_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'core'))
+    os.environ['PATH'] = core_dir + os.pathsep + os.environ.get('PATH', '')
+
 import time
 import argparse
 import torch
@@ -52,6 +58,23 @@ def parse_args():
         type=str, 
         default="auto", 
         help="Device to run inference on ('cuda', 'cpu', or 'auto')"
+    )
+    parser.add_argument(
+        "--codec",
+        type=str,
+        default="mp4v",
+        help="Video codec to use for the output video (e.g., 'mp4v', 'avc1'). Default is 'mp4v'."
+    )
+    parser.add_argument(
+        "--resize-factor",
+        type=float,
+        default=1.0,
+        help="Scale factor for the output video resolution (0.1 to 1.0). E.g. 0.5 reduces size dramatically by lowering resolution."
+    )
+    parser.add_argument(
+        "--save-sampled-only",
+        action="store_true",
+        help="Only write frames that are actually analyzed by the AI model. This reduces frame count and file size drastically."
     )
     return parser.parse_args()
 
@@ -119,10 +142,24 @@ def main():
         print(f"[+] Found {len(video_files)} video(s) to process in folder: {args.input}")
         for idx, vid in enumerate(video_files):
             print(f"\n[+] Processing video {idx+1}/{len(video_files)}: {os.path.basename(vid)}")
-            processor.process_video(vid, args.output_dir, args.fps_sample)
+            processor.process_video(
+                vid, 
+                args.output_dir, 
+                args.fps_sample,
+                codec=args.codec,
+                resize_factor=args.resize_factor,
+                save_sampled_only=args.save_sampled_only
+            )
     else:
         # Single file processing
-        processor.process_video(args.input, args.output_dir, args.fps_sample)
+        processor.process_video(
+            args.input, 
+            args.output_dir, 
+            args.fps_sample,
+            codec=args.codec,
+            resize_factor=args.resize_factor,
+            save_sampled_only=args.save_sampled_only
+        )
 
 if __name__ == "__main__":
     main()
