@@ -109,14 +109,14 @@ class VideoProcessor:
                     tracked_objects,
                 )
 
-            active_counts = self._count_active_detections(active_detections)
+            cumulative_counts = self._count_tracked_objects(tracked_objects)
             overlay_detections = [detection.to_overlay_detection() for detection in active_detections]
 
             if not save_sampled_only or should_infer:
                 annotated_frame = draw_overlays(
                     frame,
                     overlay_detections,
-                    active_counts,
+                    cumulative_counts,
                     elapsed_sec,
                     duration,
                     model_name,
@@ -150,10 +150,10 @@ class VideoProcessor:
 
         self.print_cli_summary(filename, duration, tracked_objects, out_video_path, str(out_csv_path), out_json_path if write_json else None)
 
-    def _count_active_detections(self, detections) -> dict:
+    def _count_tracked_objects(self, tracked_objects: dict) -> dict:
         counts = {}
-        for detection in detections:
-            counts[detection.object_type] = counts.get(detection.object_type, 0) + 1
+        for tracked_object in tracked_objects.values():
+            counts[tracked_object.object_type] = counts.get(tracked_object.object_type, 0) + 1
         return counts
 
     def _build_json_report(
