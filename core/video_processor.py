@@ -30,6 +30,7 @@ class VideoProcessor:
         resize_factor: float = 1.0,
         save_sampled_only: bool = False,
         write_json: bool = False,
+        progress_callback=None,
     ) -> None:
         """Processes the video with YOLO tracking and writes analyzer-style reports."""
         if not hasattr(self.detector, "track"):
@@ -92,6 +93,9 @@ class VideoProcessor:
 
         print("\n[+] Analyzing video frames with object tracking...")
         for frame_idx in tqdm(range(total_frames), desc="Analyzing Frames"):
+            if progress_callback:
+                progress_callback(frame_idx, total_frames)
+                
             ret, frame = cap.read()
             if not ret:
                 break
