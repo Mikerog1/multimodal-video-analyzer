@@ -101,6 +101,9 @@ def main():
             model_id = "facebook/detr-resnet-50"
         elif args.model_type == "yolo":
             model_id = os.path.join("models", "yolov8n.pt")
+    elif args.model_type == "yolo" and not os.path.dirname(model_id):
+        # Automatically save YOLO model weights in the 'models' directory if only a filename is provided
+        model_id = os.path.join("models", model_id)
             
     # Instantiate the correct detector
     if args.model_type == "yolo":
