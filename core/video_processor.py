@@ -30,7 +30,8 @@ class VideoProcessor:
         fps_sample: float,
         codec: str = "mp4v",
         resize_factor: float = 1.0,
-        save_sampled_only: bool = False
+        save_sampled_only: bool = False,
+        progress_callback=None
     ) -> None:
         """Processes the video, running object detection, drawing overlays, and writing reports.
         
@@ -106,6 +107,9 @@ class VideoProcessor:
         
         # Wrap in tqdm progress bar
         for frame_idx in tqdm(range(total_frames), desc="Analyzing Frames"):
+            if progress_callback:
+                progress_callback(frame_idx, total_frames)
+                
             ret, frame = cap.read()
             if not ret:
                 break

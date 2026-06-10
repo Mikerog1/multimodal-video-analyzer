@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multimodal Video Analyzer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M15 10L19.5528 7.72361C20.2177 7.39116 21 7.87465 21 8.61803V15.382C21 16.1253 20.2177 16.6088 19.5528 16.2764L15 14M4 6H14C15.1046 6 16 6.89543 16 8V16C16 17.1046 15.1046 18 14 18H4C2.89543 18 2 17.1046 2 16V8C2 6.89543 2.89543 6 4 6Z" stroke="url(#paint0_linear)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <defs>
+                        <linearGradient id="paint0_linear" x1="2" y1="6" x2="21" y2="18" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#8B5CF6"/>
+                            <stop offset="1" stop-color="#3B82F6"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <h1>Multimodal Video Analyzer</h1>
+            </div>
+            <p class="subtitle">AI-powered object detection and tracking</p>
+        </header>
+
+        <main>
+            <div class="glass-panel main-panel">
+                <form id="upload-form">
+                    
+                    <div class="file-upload-wrapper" id="drop-zone">
+                        <input type="file" id="video-file" name="file" accept="video/mp4,video/x-m4v,video/*" required>
+                        <div class="upload-content">
+                            <div class="upload-icon">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="17 8 12 3 7 8"></polyline>
+                                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                                </svg>
+                            </div>
+                            <h3>Drag & drop video here</h3>
+                            <p>or click to browse from your computer</p>
+                            <div id="file-name-display" class="file-name-display"></div>
+                        </div>
+                    </div>
+
+                    <div class="parameters-grid">
+                        <div class="param-group">
+                            <label for="model_type">Model Type</label>
+                            <select id="model_type" name="model_type">
+                                <option value="detr">DETR (ResNet-50)</option>
+                                <option value="yolo">YOLO (v8 Nano)</option>
+                            </select>
+                        </div>
+
+                        <div class="param-group hidden" id="model_id_group">
+                            <label for="model_id_select">Model ID (for YOLO model)</label>
+                            <select id="model_id_select" name="model_id" disabled>
+                                <option value="yolov8n.pt">YOLOv8 Nano (yolov8n.pt)</option>
+                                <option value="yolov8s.pt">YOLOv8 Small (yolov8s.pt)</option>
+                                <option value="yolov8m.pt">YOLOv8 Medium (yolov8m.pt)</option>
+                                <option value="yolov8l.pt">YOLOv8 Large (yolov8l.pt)</option>
+                                <option value="yolov8x.pt">YOLOv8 Extra Large (yolov8x.pt)</option>
+                            </select>
+                        </div>
+
+                        <div class="param-group">
+                            <label for="device">Device</label>
+                            <select id="device" name="device">
+                                <option value="auto">Auto</option>
+                                <option value="cuda">CUDA (GPU)</option>
+                                <option value="cpu">CPU</option>
+                            </select>
+                        </div>
+
+                        <div class="param-group">
+                            <label for="codec">Codec</label>
+                            <select id="codec" name="codec">
+                                <option value="mp4v">mp4v (Standard)</option>
+                                <option value="avc1">avc1 (H.264 / Better Web Support)</option>
+                            </select>
+                        </div>
+
+                        <div class="param-group">
+                            <label for="confidence">Confidence Threshold</label>
+                            <div class="slider-wrapper">
+                                <input type="range" id="confidence" name="confidence" min="0" max="1" step="0.05" value="0.7">
+                                <span class="val-display" id="conf-val">0.7</span>
+                            </div>
+                        </div>
+
+                        <div class="param-group">
+                            <label for="fps_sample">FPS Sampling</label>
+                            <div class="slider-wrapper">
+                                <input type="range" id="fps_sample" name="fps_sample" min="0" max="30" step="0.5" value="1.0">
+                                <span class="val-display" id="fps-val">1.0</span>
+                            </div>
+                            <p class="helper">0 = Analyze all frames</p>
+                        </div>
+
+                        <div class="param-group">
+                            <label for="resize_factor">Resize Factor</label>
+                            <div class="slider-wrapper">
+                                <input type="range" id="resize_factor" name="resize_factor" min="0.1" max="1.0" step="0.1" value="1.0">
+                                <span class="val-display" id="resize-val">1.0</span>
+                            </div>
+                        </div>
+
+                        <div class="param-group toggle-group">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="save_sampled_only" name="save_sampled_only">
+                                <span class="slider round"></span>
+                            </label>
+                            <label for="save_sampled_only" class="toggle-label">Save Sampled Only</label>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="analyze-btn" class="primary-btn">
+                        <span>Start Analysis</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Loader -->
+            <div id="loading-overlay" class="hidden">
+                <div class="loader-content">
+                    <div class="spinner" id="loading-spinner"></div>
+                    <h2 id="loading-status">Uploading...</h2>
+                    <div class="progress-bar-container hidden" id="progress-container">
+                        <div class="progress-bar-fill" id="progress-fill"></div>
+                    </div>
+                    <p class="loading-desc" id="loading-desc">This may take a while depending on the video length and model chosen.</p>
+                </div>
+            </div>
+
+            <!-- Results -->
+            <div id="results-panel" class="glass-panel hidden results-panel">
+                <h2>Analysis Complete <span class="success-icon">✓</span></h2>
+                
+                <div class="results-content">
+                    <div class="video-container">
+                        <video id="result-video" controls>
+                            Your browser does not support the video tag.
+                        </video>
+                    </div>
+                    
+                    <div class="download-links">
+                        <a id="download-csv" href="#" class="secondary-btn" download>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Download CSV Report
+                        </a>
+                        <a id="download-json" href="#" class="secondary-btn" download>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Download JSON Report
+                        </a>
+                        <a id="download-video" href="#" class="secondary-btn" download>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Download Video
+                        </a>
+                    </div>
+                </div>
+                
+                <button id="reset-btn" class="text-btn">Analyze another video</button>
+            </div>
+            
+            <div id="error-panel" class="glass-panel hidden error-panel">
+                <h2>Analysis Failed</h2>
+                <p id="error-message">An unknown error occurred.</p>
+                <button id="error-reset-btn" class="primary-btn">Try Again</button>
+            </div>
+
+        </main>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>
