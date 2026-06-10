@@ -12,7 +12,8 @@ from PIL import Image
 from tqdm import tqdm
 from datetime import timedelta
 from utils.overlay_renderer import draw_overlays
-from utils.report_generator import generate_reports
+from utils.report_generator import generate_reports, save_qa_report
+from core.qa_generator import QAGenerator
 
 class VideoProcessor:
     def __init__(self, detector):
@@ -31,6 +32,11 @@ class VideoProcessor:
         codec: str = "mp4v",
         resize_factor: float = 1.0,
         save_sampled_only: bool = False,
+        generate_video: bool = True,
+        generate_csv: bool = True,
+        generate_json: bool = True,
+        generate_qa: bool = True,
+        qa_categories: list = None,
         progress_callback=None
     ) -> None:
         """Processes the video, running object detection, drawing overlays, and writing reports.
@@ -76,11 +82,13 @@ class VideoProcessor:
         timestamp_str = time.strftime("%Y%m%d_%H%M")
         run_output_dir = os.path.join(output_dir, f"results_{base_name}_{timestamp_str}")
         os.makedirs(run_output_dir, exist_ok=True)
-        out_video_path = os.path.join(run_output_dir, f"{base_name}_analyzed.mp4")
+        out_video_path = os.path.join(run_output_dir, f"{base_name}_analyzed.mp4") if generate_video else None
         
         # Setup Video Writer
-        fourcc = cv2.VideoWriter_fourcc(*codec)
-        out_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (out_width, out_height))
+        out_writer = None
+        if generate_video:
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            out_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (out_width, out_height))
         
         # Calculate sampling intervals
         if fps_sample > 0:
@@ -93,6 +101,7 @@ class VideoProcessor:
         # Tracking variables
         timeline_data = []  # Stores second-by-second analytics
         last_detected_boxes = []  # Persisted detections for interpolation
+        processed_frames_data = []  # Stores frame-level data for QA generation
         
         # Summary metrics
         max_counts = {"person": 0, "car": 0, "dog": 0}
@@ -138,6 +147,22 @@ class VideoProcessor:
                 # Update summary metrics
                 for k in max_counts:
                     max_counts[k] = max(max_counts[k], frame_counts[k])
+                
+                # Calculate Laplacian variance for motion blur detection
+                gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                blur_var = cv2.Laplacian(gray_frame, cv2.CV_64F).var()
+                
+                # Calculate average brightness for lighting classification
+                brightness = gray_frame.mean()
+                
+                # Store frame-level data for QA generation (use raw_detections to preserve all classes)
+                processed_frames_data.append({
+                    "frame_idx": frame_idx,
+                    "timestamp": elapsed_sec,
+                    "detections": raw_detections,
+                    "blur_var": blur_var,
+                    "brightness": brightness
+                })
             
             # Recalculate counts for the active frame (drawn boxes)
             active_counts = {"person": 0, "car": 0, "dog": 0}
@@ -159,29 +184,31 @@ class VideoProcessor:
                         sum_counts[k] += active_counts[k]
                     seconds_tracked += 1
             
-            # Only write frames that were sampled if save_sampled_only is True
-            if not save_sampled_only or should_infer:
-                # HUD overlay
-                annotated_frame = draw_overlays(
-                    frame,
-                    last_detected_boxes,
-                    active_counts,
-                    elapsed_sec,
-                    duration,
-                    model_name,
-                    device
-                )
-                
-                # Resize frame if factor is specified
-                if resize_factor < 1.0:
-                    annotated_frame = cv2.resize(annotated_frame, (out_width, out_height))
-                
-                # Write to Output Video
-                out_writer.write(annotated_frame)
+            # Only write frames if generate_video is True
+            if generate_video:
+                if not save_sampled_only or should_infer:
+                    # HUD overlay
+                    annotated_frame = draw_overlays(
+                        frame,
+                        last_detected_boxes,
+                        active_counts,
+                        elapsed_sec,
+                        duration,
+                        model_name,
+                        device
+                    )
+                    
+                    # Resize frame if factor is specified
+                    if resize_factor < 1.0:
+                        annotated_frame = cv2.resize(annotated_frame, (out_width, out_height))
+                    
+                    # Write to Output Video
+                    out_writer.write(annotated_frame)
             
         # Release resources
         cap.release()
-        out_writer.release()
+        if generate_video and out_writer is not None:
+            out_writer.release()
         
         # Calculate Averages
         avg_counts = {
@@ -216,12 +243,25 @@ class VideoProcessor:
         }
         
         # Save JSON and CSV Reports (inside unique run folder)
-        out_csv_path, _ = generate_reports(run_output_dir, base_name, report_summary)
+        out_csv_path, out_json_path = generate_reports(
+            run_output_dir, 
+            base_name, 
+            report_summary, 
+            write_csv=generate_csv, 
+            write_json=generate_json
+        )
+        
+        # Generate and save QA pairs
+        out_qa_path = None
+        if generate_qa:
+            qa_generator = QAGenerator(filename, processed_frames_data, duration, qa_categories=qa_categories)
+            qa_pairs = qa_generator.generate_qa_pairs()
+            out_qa_path = save_qa_report(run_output_dir, base_name, qa_pairs)
         
         # Print CLI Summary Table
-        self.print_cli_summary(filename, duration, max_counts, avg_counts, out_video_path, out_csv_path)
+        self.print_cli_summary(filename, duration, max_counts, avg_counts, out_video_path, out_csv_path, out_qa_path)
 
-    def print_cli_summary(self, filename: str, duration: float, max_counts: dict, avg_counts: dict, out_video: str, out_csv: str) -> None:
+    def print_cli_summary(self, filename: str, duration: float, max_counts: dict, avg_counts: dict, out_video: str, out_csv: str, out_qa: str) -> None:
         """Prints a beautiful summary table of detections to the console."""
         border = "=" * 60
         thin_line = "-" * 60
@@ -236,6 +276,10 @@ class VideoProcessor:
         print(f"  Dogs       | {max_counts['dog']:<10} | {avg_counts['dog']:<13}")
         print(f"{border}")
         print(f"  Outputs Saved:")
-        print(f"  - Annotated Video : {os.path.abspath(out_video)}")
-        print(f"  - CSV Count Log   : {os.path.abspath(out_csv)}")
+        if out_video:
+            print(f"  - Annotated Video : {os.path.abspath(out_video)}")
+        if out_csv:
+            print(f"  - CSV Count Log   : {os.path.abspath(out_csv)}")
+        if out_qa:
+            print(f"  - QA Pairs JSON   : {os.path.abspath(out_qa)}")
         print(f"{border}\n")

@@ -20,15 +20,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelIdGroup = document.getElementById('model_id_group');
     const modelIdSelect = document.getElementById('model_id_select');
 
-    modelTypeSelect.addEventListener('change', (e) => {
-        if (e.target.value === 'yolo') {
+    const syncModelFields = () => {
+        if (modelTypeSelect.value === 'yolo') {
             modelIdGroup.classList.remove('hidden');
             modelIdSelect.disabled = false;
         } else {
             modelIdGroup.classList.add('hidden');
             modelIdSelect.disabled = true;
         }
-    });
+    };
+    modelTypeSelect.addEventListener('change', syncModelFields);
+    syncModelFields(); // Run on startup
+
+    // QA Option Toggle
+    const generateQaCheckbox = document.getElementById('generate_qa');
+    const qaCategoriesGroup = document.getElementById('qa_categories_group');
+    const qaCheckboxes = qaCategoriesGroup.querySelectorAll('input[type="checkbox"]');
+
+    const syncQaFields = () => {
+        if (generateQaCheckbox.checked) {
+            qaCategoriesGroup.classList.remove('hidden');
+            qaCheckboxes.forEach(cb => cb.disabled = false);
+        } else {
+            qaCategoriesGroup.classList.add('hidden');
+            qaCheckboxes.forEach(cb => cb.disabled = true);
+        }
+    };
+    generateQaCheckbox.addEventListener('change', syncQaFields);
+    syncQaFields(); // Run on startup
 
     // Drag and drop setup
     const dropZone = document.getElementById('drop-zone');
@@ -100,12 +119,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData(form);
         
-        // Convert checkbox to boolean explicit value if needed, though FormData handles it
+        // Convert checkboxes to explicit boolean values
         if (!formData.has('save_sampled_only')) {
             formData.append('save_sampled_only', 'false');
         } else {
             formData.set('save_sampled_only', 'true');
         }
+
+        formData.set('generate_video', document.getElementById('generate_video').checked ? 'true' : 'false');
+        formData.set('generate_csv', document.getElementById('generate_csv').checked ? 'true' : 'false');
+        formData.set('generate_json', document.getElementById('generate_json').checked ? 'true' : 'false');
+        formData.set('generate_qa', document.getElementById('generate_qa').checked ? 'true' : 'false');
+
+        // Compile QA Categories
+        const activeQaCategories = [];
+        if (document.getElementById('qa_counting').checked) activeQaCategories.push('counting');
+        if (document.getElementById('qa_negative').checked) activeQaCategories.push('negative');
+        if (document.getElementById('qa_ambiguity').checked) activeQaCategories.push('ambiguity');
+        if (document.getElementById('qa_day_night').checked) activeQaCategories.push('day_night');
+        formData.set('qa_categories', activeQaCategories.join(','));
 
         // Show loading state
         mainPanel.classList.add('hidden');
@@ -187,6 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const videoPlayer = document.getElementById('result-video');
         const downloadCsv = document.getElementById('download-csv');
         const downloadJson = document.getElementById('download-json');
+        const downloadQa = document.getElementById('download-qa');
         const downloadVideo = document.getElementById('download-video');
         
         if (results.video) {
@@ -212,6 +245,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             downloadJson.style.display = 'none';
         }
+        
+        if (results.qa_json) {
+            downloadQa.href = results.qa_json;
+            downloadQa.style.display = 'flex';
+        } else {
+            downloadQa.style.display = 'none';
+        }
     }
 
     function showError(msg) {
@@ -231,19 +271,43 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('fps-val').textContent = '1.0';
         document.getElementById('resize-val').textContent = '1.0';
         
-        // Reset model toggle
-        const modelIdGroup = document.getElementById('model_id_group');
-        const modelIdSelect = document.getElementById('model_id_select');
-        modelIdGroup.classList.add('hidden');
-        modelIdSelect.disabled = true;
+        // Sync conditional UI states
+        syncModelFields();
+        syncQaFields();
 
         // Reset progress
         document.getElementById('progress-container').classList.add('hidden');
         document.getElementById('progress-fill').style.width = '0%';
         document.getElementById('loading-spinner').style.display = 'block';
 
+        // Reset download links visibility
+        document.getElementById('download-qa').style.display = 'none';
+
         errorPanel.classList.add('hidden');
         resultsPanel.classList.add('hidden');
         mainPanel.classList.remove('hidden');
+    }
+
+    // Preload results if video query parameter is passed
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoParam = urlParams.get('video');
+    if (videoParam) {
+        fetch(`/api/results?video=${encodeURIComponent(videoParam)}`)
+            .then(response => {
+                if (response.ok) {
+                    return response.json();
+                }
+                throw new Error('No preloaded results found');
+            })
+            .then(data => {
+                if (data.status === 'completed') {
+                    showResults(data.results);
+                    fileNameDisplay.textContent = videoParam;
+                    mainPanel.classList.add('hidden');
+                }
+            })
+            .catch(err => {
+                console.log('No preloaded results found:', err.message);
+            });
     }
 });

@@ -100,7 +100,7 @@
                         </div>
 
                         <div class="param-group">
-                            <label for="resize_factor">Resize Factor</label>
+                            <label for="resize_factor">Resize Factor (reduces video resolution, e.g. 1920x to 960px)</label>
                             <div class="slider-wrapper">
                                 <input type="range" id="resize_factor" name="resize_factor" min="0.1" max="1.0" step="0.1" value="1.0">
                                 <span class="val-display" id="resize-val">1.0</span>
@@ -113,6 +113,50 @@
                                 <span class="slider round"></span>
                             </label>
                             <label for="save_sampled_only" class="toggle-label">Save Sampled Only</label>
+                        </div>
+
+                        <div class="param-group full-width">
+                            <label class="section-title">Output Files to Generate</label>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="generate_video" name="generate_video" checked>
+                                    <span>Annotated Video</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="generate_csv" name="generate_csv" checked>
+                                    <span>Counts CSV</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="generate_json" name="generate_json" checked>
+                                    <span>Analysis JSON</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="generate_qa" name="generate_qa" checked>
+                                    <span>QA Pairs JSON</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="param-group full-width" id="qa_categories_group">
+                            <label class="section-title">QA Categories to Generate</label>
+                            <div class="checkbox-grid">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="qa_counting" name="qa_counting" checked>
+                                    <span>Counting QA</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="qa_negative" name="qa_negative" checked>
+                                    <span>Negative / Absence QA</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="qa_ambiguity" name="qa_ambiguity" checked>
+                                    <span>Ambiguity-Aware QA</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="qa_day_night" name="qa_day_night" checked>
+                                    <span>Day vs. Night QA</span>
+                                </label>
+                            </div>
                         </div>
                     </div>
 
@@ -154,6 +198,10 @@
                         <a id="download-json" href="#" class="secondary-btn" download>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                             Download JSON Report
+                        </a>
+                        <a id="download-qa" href="#" class="secondary-btn" download>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                            Download QA Pairs JSON
                         </a>
                         <a id="download-video" href="#" class="secondary-btn" download>
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
