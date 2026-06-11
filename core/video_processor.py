@@ -252,16 +252,16 @@ class VideoProcessor:
         )
         
         # Generate and save QA pairs
-        out_qa_path = None
+        out_qa_paths = []
         if generate_qa:
             qa_generator = QAGenerator(filename, processed_frames_data, duration, qa_categories=qa_categories)
-            qa_pairs = qa_generator.generate_qa_pairs()
-            out_qa_path = save_qa_report(run_output_dir, base_name, qa_pairs)
+            qa_by_category = qa_generator.generate_qa_pairs()
+            out_qa_paths = save_qa_report(run_output_dir, base_name, qa_by_category)
         
         # Print CLI Summary Table
-        self.print_cli_summary(filename, duration, max_counts, avg_counts, out_video_path, out_csv_path, out_qa_path)
+        self.print_cli_summary(filename, duration, max_counts, avg_counts, out_video_path, out_csv_path, out_qa_paths)
 
-    def print_cli_summary(self, filename: str, duration: float, max_counts: dict, avg_counts: dict, out_video: str, out_csv: str, out_qa: str) -> None:
+    def print_cli_summary(self, filename: str, duration: float, max_counts: dict, avg_counts: dict, out_video: str, out_csv: str, out_qa_paths: list) -> None:
         """Prints a beautiful summary table of detections to the console."""
         border = "=" * 60
         thin_line = "-" * 60
@@ -280,6 +280,6 @@ class VideoProcessor:
             print(f"  - Annotated Video : {os.path.abspath(out_video)}")
         if out_csv:
             print(f"  - CSV Count Log   : {os.path.abspath(out_csv)}")
-        if out_qa:
-            print(f"  - QA Pairs JSON   : {os.path.abspath(out_qa)}")
+        for qa_path in out_qa_paths:
+            print(f"  - QA Pairs JSON   : {os.path.abspath(qa_path)}")
         print(f"{border}\n")

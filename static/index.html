@@ -115,49 +115,53 @@
                             <label for="save_sampled_only" class="toggle-label">Save Sampled Only</label>
                         </div>
 
-                        <div class="param-group full-width">
-                            <label class="section-title">Output Files to Generate</label>
-                            <div class="checkbox-grid">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="generate_video" name="generate_video" checked>
-                                    <span>Annotated Video</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="generate_csv" name="generate_csv" checked>
-                                    <span>Counts CSV</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="generate_json" name="generate_json" checked>
-                                    <span>Analysis JSON</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="generate_qa" name="generate_qa" checked>
-                                    <span>QA Pairs JSON</span>
-                                </label>
+                        <!-- Output config: two side-by-side cards -->
+                        <div class="param-group full-width output-config-grid">
+
+                            <!-- Card 1: Analysis outputs -->
+                            <div class="output-config-card">
+                                <p class="output-config-title">Analysis Outputs</p>
+                                <div class="checkbox-grid">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="generate_video" name="generate_video" checked>
+                                        <span>Annotated Video</span>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="generate_csv" name="generate_csv" checked>
+                                        <span>Counts CSV</span>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="generate_json" name="generate_json" checked>
+                                        <span>Analysis JSON</span>
+                                    </label>
+                                </div>
                             </div>
+
+                            <!-- Card 2: QA Generator -->
+                            <div class="output-config-card qa-config-card">
+                                <p class="output-config-title qa-config-title">QA Generator</p>
+                                <div class="checkbox-grid" id="qa_categories_group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="qa_counting" name="qa_counting" checked>
+                                        <span>Counting</span>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="qa_negative" name="qa_negative" checked>
+                                        <span>Negative / Absence</span>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="qa_ambiguity" name="qa_ambiguity" checked>
+                                        <span>Ambiguity</span>
+                                    </label>
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="qa_day_night" name="qa_day_night" checked>
+                                        <span>Day / Night</span>
+                                    </label>
+                                </div>
+                            </div>
+
                         </div>
 
-                        <div class="param-group full-width" id="qa_categories_group">
-                            <label class="section-title">QA Categories to Generate</label>
-                            <div class="checkbox-grid">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="qa_counting" name="qa_counting" checked>
-                                    <span>Counting QA</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="qa_negative" name="qa_negative" checked>
-                                    <span>Negative / Absence QA</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="qa_ambiguity" name="qa_ambiguity" checked>
-                                    <span>Ambiguity-Aware QA</span>
-                                </label>
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="qa_day_night" name="qa_day_night" checked>
-                                    <span>Day vs. Night QA</span>
-                                </label>
-                            </div>
-                        </div>
                     </div>
 
                     <button type="submit" id="analyze-btn" class="primary-btn">
@@ -181,35 +185,42 @@
 
             <!-- Results -->
             <div id="results-panel" class="glass-panel hidden results-panel">
-                <h2>Analysis Complete <span class="success-icon">✓</span></h2>
-                
-                <div class="results-content">
-                    <div class="video-container">
-                        <video id="result-video" controls>
-                            Your browser does not support the video tag.
-                        </video>
-                    </div>
-                    
-                    <div class="download-links">
-                        <a id="download-csv" href="#" class="secondary-btn" download>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            Download CSV Report
-                        </a>
-                        <a id="download-json" href="#" class="secondary-btn" download>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            Download JSON Report
-                        </a>
-                        <a id="download-qa" href="#" class="secondary-btn" download>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            Download QA Pairs JSON
-                        </a>
-                        <a id="download-video" href="#" class="secondary-btn" download>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                            Download Video
-                        </a>
-                    </div>
-                </div>
-                
+                <h2>
+                    <span class="success-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    </span>
+                    <span id="result-filename">Analysis Complete</span>
+                </h2>
+                                   <div class="results-content">
+                        <div class="video-container">
+                            <video id="result-video" controls>
+                                Your browser does not support the video tag.
+                            </video>
+                        </div>
+
+                        <div class="output-section hidden">
+                            <p class="output-section-label">Analysis Outputs</p>
+                            <div class="download-links" id="analysis-downloads">
+                                <a id="download-csv" href="#" class="secondary-btn" download>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    Download Counts CSV
+                                </a>
+                                <a id="download-json" href="#" class="secondary-btn" download>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    Download Analysis JSON
+                                </a>
+                                <a id="download-video" href="#" class="secondary-btn" download>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                    Download Annotated Video
+                                </a>
+                            </div>
+                        </div>
+
+                        <div class="output-section qa-output-section hidden" id="qa-output-section">
+                            <p class="output-section-label">QA Pair Downloads</p>
+                            <div class="download-links" id="qa-downloads-container"></div>
+                        </div>
+                    </div>  
                 <button id="reset-btn" class="text-btn">Analyze another video</button>
             </div>
             

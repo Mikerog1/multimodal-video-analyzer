@@ -40,21 +40,26 @@ def generate_reports(output_dir: str, base_name: str, report_data: dict, write_c
         
     return out_csv_path, out_json_path
 
-def save_qa_report(output_dir: str, base_name: str, qa_pairs: list) -> str:
-    """Saves the generated QA pairs list as a formatted JSON report.
+def save_qa_report(output_dir: str, base_name: str, qa_by_category: dict) -> list:
+    """Saves each QA category as a separate formatted JSON report.
     
     Args:
-        output_dir: Directory where the report will be saved.
-        base_name: Base filename (without extension) for the report.
-        qa_pairs: List of dicts containing the QA pairs.
+        output_dir: Directory where the reports will be saved.
+        base_name: Base filename (without extension) for the reports.
+        qa_by_category: Dict mapping category name -> list of QA pair dicts.
         
     Returns:
-        The absolute path to the saved QA JSON report.
+        A list of absolute paths to the saved QA JSON files (one per non-empty category).
     """
     os.makedirs(output_dir, exist_ok=True)
-    out_qa_path = os.path.join(output_dir, f"{base_name}_qa_pairs.json")
+    saved_paths = []
     
-    with open(out_qa_path, mode="w") as json_file:
-        json.dump(qa_pairs, json_file, indent=2)
+    for category, qa_pairs in qa_by_category.items():
+        if not qa_pairs:
+            continue
+        out_qa_path = os.path.join(output_dir, f"{base_name}_qa_{category}.json")
+        with open(out_qa_path, mode="w") as json_file:
+            json.dump(qa_pairs, json_file, indent=2)
+        saved_paths.append(out_qa_path)
         
-    return out_qa_path
+    return saved_paths

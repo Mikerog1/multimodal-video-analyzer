@@ -5,7 +5,7 @@ import asyncio
 import concurrent.futures
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 
 # Add core directory to PATH on Windows to allow OpenCV to locate the openh264 DLL
 if os.name == 'nt':
@@ -17,11 +17,13 @@ from core.video_processor import VideoProcessor
 
 app = FastAPI(title="Multimodal Video Analyzer Web API")
 
-# Ensure necessary directories exist using absolute paths to prevent resolution discrepancies
-input_dir = os.path.abspath("input")
-output_dir = os.path.abspath("output")
-static_dir = os.path.abspath("static")
-models_dir = os.path.abspath("models")
+# Ensure necessary directories exist using paths relative to THIS script file,
+# not the current working directory, so the server works regardless of launch location.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+input_dir = os.path.join(BASE_DIR, "input")
+output_dir = os.path.join(BASE_DIR, "output")
+static_dir = os.path.join(BASE_DIR, "static")
+models_dir = os.path.join(BASE_DIR, "models")
 
 os.makedirs(input_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
@@ -120,14 +122,14 @@ def run_analysis(
             video_file = next((f for f in files if f.endswith('.mp4')), None)
             csv_file = next((f for f in files if f.endswith('.csv')), None)
             json_file = next((f for f in files if f.endswith('_analysis.json')), None)
-            qa_json_file = next((f for f in files if f.endswith('_qa_pairs.json')), None)
+            qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
             
             tasks[task_id]["results"] = {
                 "folder": f"/output/{run_folder}",
                 "video": f"/output/{run_folder}/{video_file}" if video_file else None,
                 "csv": f"/output/{run_folder}/{csv_file}" if csv_file else None,
                 "json": f"/output/{run_folder}/{json_file}" if json_file else None,
-                "qa_json": f"/output/{run_folder}/{qa_json_file}" if qa_json_file else None,
+                "qa_json_files": [f"/output/{run_folder}/{f}" for f in qa_json_files],
             }
             tasks[task_id]["status"] = "completed"
         else:
@@ -174,7 +176,7 @@ async def analyze_video(
     
     # Save the uploaded file in a unique folder to prevent name collisions
     # while preserving the original filename for cleaner output results.
-    upload_dir = os.path.join(os.path.abspath("input"), task_id)
+    upload_dir = os.path.join(input_dir, task_id)
     os.makedirs(upload_dir, exist_ok=True)
     file_path = os.path.join(upload_dir, file.filename)
     
@@ -196,7 +198,7 @@ async def analyze_video(
         run_analysis, 
         task_id, 
         file_path, 
-        os.path.abspath("output"), 
+        output_dir, 
         model_type,
         model_id,
         device,
@@ -224,9 +226,40 @@ async def get_status(task_id: str):
 async def debug_tasks():
     return tasks
 
+@app.get("/api/download")
+async def download_file(path: str):
+    """Serve a file from the output directory as a proper download attachment.
+    
+    The 'path' parameter must be a relative URL path like '/output/folder/file.csv'.
+    This endpoint adds Content-Disposition: attachment so browsers download the file.
+    """
+    # Strip leading /output/ prefix and resolve to the actual filesystem path
+    relative = path.lstrip("/")
+    if not relative.startswith("output/"):
+        return JSONResponse(status_code=400, content={"error": "Invalid path"})
+    
+    # Remove 'output/' prefix to get path within output_dir
+    file_subpath = relative[len("output/"):]
+    file_path = os.path.join(output_dir, file_subpath)
+    file_path = os.path.normpath(file_path)
+    
+    # Security: ensure the resolved path is still inside output_dir
+    if not file_path.startswith(os.path.normpath(output_dir)):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    
+    if not os.path.isfile(file_path):
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+    
+    filename = os.path.basename(file_path)
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
 @app.get("/api/results")
 async def get_results(video: str):
-    output_dir = os.path.abspath("output")
+    # Use the module-level output_dir (script-relative, not CWD-relative)
     if not os.path.exists(output_dir):
         return JSONResponse(status_code=404, content={"error": "Output directory not found"})
         
@@ -250,14 +283,14 @@ async def get_results(video: str):
     video_file = next((f for f in files if f.endswith('.mp4')), None)
     csv_file = next((f for f in files if f.endswith('.csv')), None)
     json_file = next((f for f in files if f.endswith('_analysis.json')), None)
-    qa_json_file = next((f for f in files if f.endswith('_qa_pairs.json')), None)
+    qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
     
     results = {
         "folder": f"/output/{latest_folder}",
         "video": f"/output/{latest_folder}/{video_file}" if video_file else None,
         "csv": f"/output/{latest_folder}/{csv_file}" if csv_file else None,
         "json": f"/output/{latest_folder}/{json_file}" if json_file else None,
-        "qa_json": f"/output/{latest_folder}/{qa_json_file}" if qa_json_file else None,
+        "qa_json_files": [f"/output/{latest_folder}/{f}" for f in qa_json_files],
     }
     
     return {"status": "completed", "results": results}

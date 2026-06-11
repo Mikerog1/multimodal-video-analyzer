@@ -159,8 +159,14 @@ class QAGenerator:
         return tracks
 
     def generate_qa_pairs(self):
-        """Generates QA pairs according to the specified categories and schema."""
+        """Generates QA pairs according to the specified categories and schema.
+        
+        Returns:
+            A dict keyed by category name, each value being a list of QA pair dicts.
+            Example: {"counting": [...], "negative": [...], "ambiguity": [...], "day_night": [...]}
+        """
         tracks = self.track_objects()
+        qa_by_category = {cat: [] for cat in self.qa_categories}
         
         # Segment the video into 10-second intervals
         segment_duration = 10.0
@@ -175,7 +181,6 @@ class QAGenerator:
         if not segments and self.duration > 0:
             segments.append((0.0, self.duration))
             
-        qa_pairs = []
         
         for t_start, t_end in segments:
             t_start_str = format_time(t_start)
@@ -230,7 +235,7 @@ class QAGenerator:
             if "counting" in self.qa_categories:
                 if num_pedestrians > 0:
                     difficulty = "hard" if is_blurred or num_pedestrians >= 4 else ("medium" if num_pedestrians >= 2 else "easy")
-                    qa_pairs.append({
+                    qa_by_category["counting"].append({
                         "Question": f"How many pedestrians are visible in the video segment from {t_start_str} to {t_end_str}?",
                         "Answer": str(num_pedestrians),
                         "Answer format": "open-ended",
@@ -245,7 +250,7 @@ class QAGenerator:
                     
                 if num_vehicles > 0:
                     difficulty = "hard" if is_blurred or num_vehicles >= 5 else ("medium" if num_vehicles >= 2 else "easy")
-                    qa_pairs.append({
+                    qa_by_category["counting"].append({
                         "Question": f"How many vehicles are visible in the video segment from {t_start_str} to {t_end_str}?",
                         "Answer": str(num_vehicles),
                         "Answer format": "open-ended",
@@ -296,7 +301,7 @@ class QAGenerator:
                     # Select an item deterministically based on timestamp to avoid random shifts on rerun
                     seed_idx = int(t_start * 100) % len(absent_candidates)
                     selected_absent = absent_candidates[seed_idx]
-                    qa_pairs.append({
+                    qa_by_category["negative"].append({
                         "Question": f"Is there any {selected_absent} present in the video segment from {t_start_str} to {t_end_str}?",
                         "Answer": "no",
                         "Answer format": "yes-no",
@@ -322,7 +327,7 @@ class QAGenerator:
                     elif num_dogs > 0:
                         target_object = "dog"
                         
-                    qa_pairs.append({
+                    qa_by_category["ambiguity"].append({
                         "Question": f"Are the details of the {target_object} in the segment from {t_start_str} to {t_end_str} clearly readable, or too blurred to identify?",
                         "Answer": "too blurred to identify",
                         "Answer format": "open-ended",
@@ -341,7 +346,7 @@ class QAGenerator:
                 if day_night == "night":
                     # Check for a pedestrian or vehicle to query low light visibility
                     if num_vehicles > 0:
-                        qa_pairs.append({
+                        qa_by_category["day_night"].append({
                             "Question": f"Is the vehicle still visible in this night segment from {t_start_str} to {t_end_str}?",
                             "Answer": "yes",
                             "Answer format": "yes-no",
@@ -354,7 +359,7 @@ class QAGenerator:
                             "Unanswerable flag": False
                         })
                     elif num_pedestrians > 0:
-                        qa_pairs.append({
+                        qa_by_category["day_night"].append({
                             "Question": f"Is the crossing pedestrian visible in this night segment from {t_start_str} to {t_end_str}?",
                             "Answer": "yes",
                             "Answer format": "yes-no",
@@ -368,7 +373,7 @@ class QAGenerator:
                         })
                     else:
                         # Ask about pedestrian absence under dark settings
-                        qa_pairs.append({
+                        qa_by_category["day_night"].append({
                             "Question": f"Are there any pedestrians visible in this dark night segment from {t_start_str} to {t_end_str}?",
                             "Answer": "no",
                             "Answer format": "yes-no",
@@ -381,4 +386,4 @@ class QAGenerator:
                             "Unanswerable flag": False
                         })
 
-        return qa_pairs
+        return qa_by_category

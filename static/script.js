@@ -32,22 +32,6 @@ document.addEventListener('DOMContentLoaded', () => {
     modelTypeSelect.addEventListener('change', syncModelFields);
     syncModelFields(); // Run on startup
 
-    // QA Option Toggle
-    const generateQaCheckbox = document.getElementById('generate_qa');
-    const qaCategoriesGroup = document.getElementById('qa_categories_group');
-    const qaCheckboxes = qaCategoriesGroup.querySelectorAll('input[type="checkbox"]');
-
-    const syncQaFields = () => {
-        if (generateQaCheckbox.checked) {
-            qaCategoriesGroup.classList.remove('hidden');
-            qaCheckboxes.forEach(cb => cb.disabled = false);
-        } else {
-            qaCategoriesGroup.classList.add('hidden');
-            qaCheckboxes.forEach(cb => cb.disabled = true);
-        }
-    };
-    generateQaCheckbox.addEventListener('change', syncQaFields);
-    syncQaFields(); // Run on startup
 
     // Drag and drop setup
     const dropZone = document.getElementById('drop-zone');
@@ -129,14 +113,14 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.set('generate_video', document.getElementById('generate_video').checked ? 'true' : 'false');
         formData.set('generate_csv', document.getElementById('generate_csv').checked ? 'true' : 'false');
         formData.set('generate_json', document.getElementById('generate_json').checked ? 'true' : 'false');
-        formData.set('generate_qa', document.getElementById('generate_qa').checked ? 'true' : 'false');
 
-        // Compile QA Categories
+        // Compile QA Categories — generate_qa is true if any category is checked
         const activeQaCategories = [];
         if (document.getElementById('qa_counting').checked) activeQaCategories.push('counting');
         if (document.getElementById('qa_negative').checked) activeQaCategories.push('negative');
         if (document.getElementById('qa_ambiguity').checked) activeQaCategories.push('ambiguity');
         if (document.getElementById('qa_day_night').checked) activeQaCategories.push('day_night');
+        formData.set('generate_qa', activeQaCategories.length > 0 ? 'true' : 'false');
         formData.set('qa_categories', activeQaCategories.join(','));
 
         // Show loading state
@@ -211,21 +195,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Helper: build a /api/download URL from an output-relative path
+    function downloadUrl(path) {
+        return `/api/download?path=${encodeURIComponent(path)}`;
+    }
+
     // Display functions
     function showResults(results) {
         loadingOverlay.classList.add('hidden');
         resultsPanel.classList.remove('hidden');
+
+        // Set filename in the result header
+        const filename = fileInput.files.length > 0 ? fileInput.files[0].name : 'Analysis Complete';
+        document.getElementById('result-filename').textContent = filename;
         
         const videoPlayer = document.getElementById('result-video');
         const downloadCsv = document.getElementById('download-csv');
         const downloadJson = document.getElementById('download-json');
-        const downloadQa = document.getElementById('download-qa');
         const downloadVideo = document.getElementById('download-video');
-        
+        const analysisSection = document.getElementById('analysis-downloads').closest('.output-section');
+
+        let hasAnalysisFiles = false;
         if (results.video) {
+            hasAnalysisFiles = true;
             videoPlayer.src = results.video;
             videoPlayer.load();
-            downloadVideo.href = results.video;
+            downloadVideo.href = downloadUrl(results.video);
+            downloadVideo.removeAttribute('download');
             downloadVideo.style.display = 'flex';
         } else {
             videoPlayer.style.display = 'none';
@@ -233,24 +229,52 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         if (results.csv) {
-            downloadCsv.href = results.csv;
+            hasAnalysisFiles = true;
+            downloadCsv.href = downloadUrl(results.csv);
+            downloadCsv.removeAttribute('download');
             downloadCsv.style.display = 'flex';
         } else {
             downloadCsv.style.display = 'none';
         }
         
         if (results.json) {
-            downloadJson.href = results.json;
+            hasAnalysisFiles = true;
+            downloadJson.href = downloadUrl(results.json);
+            downloadJson.removeAttribute('download');
             downloadJson.style.display = 'flex';
         } else {
             downloadJson.style.display = 'none';
         }
-        
-        if (results.qa_json) {
-            downloadQa.href = results.qa_json;
-            downloadQa.style.display = 'flex';
+
+        // Show or hide the Analysis Outputs section
+        if (hasAnalysisFiles) {
+            analysisSection.classList.remove('hidden');
         } else {
-            downloadQa.style.display = 'none';
+            analysisSection.classList.add('hidden');
+        }
+
+
+        // Render per-category QA download buttons
+        const qaSection = document.getElementById('qa-output-section');
+        const qaContainer = document.getElementById('qa-downloads-container');
+        qaContainer.innerHTML = '';
+        const qaFiles = results.qa_json_files || (results.qa_json ? [results.qa_json] : []);
+        if (qaFiles.length > 0) {
+            qaSection.classList.remove('hidden');
+            qaFiles.forEach(filePath => {
+                const match = filePath.match(/_qa_([^/]+)\.json$/);
+                const label = match
+                    ? 'Download QA: ' + match[1].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                    : 'Download QA Pairs';
+                const svgIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`;
+                const btn = document.createElement('a');
+                btn.href = downloadUrl(filePath);
+                btn.className = 'secondary-btn';
+                btn.innerHTML = svgIcon + ' ' + label;
+                qaContainer.appendChild(btn);
+            });
+        } else {
+            qaSection.classList.add('hidden');
         }
     }
 
@@ -273,15 +297,16 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Sync conditional UI states
         syncModelFields();
-        syncQaFields();
 
         // Reset progress
         document.getElementById('progress-container').classList.add('hidden');
         document.getElementById('progress-fill').style.width = '0%';
         document.getElementById('loading-spinner').style.display = 'block';
 
-        // Reset download links visibility
-        document.getElementById('download-qa').style.display = 'none';
+        // Hide result sections
+        document.getElementById('qa-downloads-container').innerHTML = '';
+        document.getElementById('qa-output-section').classList.add('hidden');
+        document.getElementById('analysis-downloads').closest('.output-section').classList.add('hidden');
 
         errorPanel.classList.add('hidden');
         resultsPanel.classList.add('hidden');

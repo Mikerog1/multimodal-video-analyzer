@@ -471,6 +471,51 @@ video {
     gap: 1rem;
 }
 
+/* Output Sections (Analysis vs QA) */
+.output-section {
+    margin-top: 1.5rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem 1.5rem;
+    background: rgba(15, 23, 42, 0.3);
+}
+
+.output-section + .output-section {
+    margin-top: 1rem;
+}
+
+.output-section-label {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 0.2rem 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.qa-output-section {
+    border-color: rgba(139, 92, 246, 0.35);
+    background: rgba(139, 92, 246, 0.06);
+}
+
+.qa-output-section .output-section-label {
+    color: #c4b5fd;
+    background: rgba(139, 92, 246, 0.18);
+    border-color: rgba(139, 92, 246, 0.35);
+}
+
+/* QA download buttons — use secondary-btn class directly */
+.download-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
 /* Error */
 .error-panel {
     text-align: center;
@@ -512,6 +557,58 @@ video {
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+/* Output config cards (Analysis vs QA Generator) */
+.output-config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-top: 0.5rem;
+}
+
+@media (max-width: 600px) {
+    .output-config-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.output-config-card {
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid var(--surface-border);
+    border-radius: 14px;
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.qa-config-card {
+    border-color: rgba(139, 92, 246, 0.35);
+    background: rgba(139, 92, 246, 0.06);
+}
+
+.output-config-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0;
+}
+
+.qa-config-title {
+    color: #a78bfa;
+}
+
+.output-config-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
 }
 
 /* Selective Outputs & Checkbox Grid */
