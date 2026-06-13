@@ -1,6 +1,7 @@
+import importlib.util
+
 import torch
 from PIL import Image
-from transformers import AutoImageProcessor, AutoModelForObjectDetection
 from models.detector_interface import BaseDetector
 
 class DetrDetector(BaseDetector):
@@ -15,10 +16,24 @@ class DetrDetector(BaseDetector):
         self.model_id = model_id
         self.device = device
         self.confidence_threshold = confidence_threshold
+
+        try:
+            transformers = importlib.import_module("transformers")
+        except ImportError as exc:
+            raise ImportError(
+                "DETR requires the optional 'transformers' dependency. "
+                "Install it to use '--model-type detr'."
+            ) from exc
+
+        if importlib.util.find_spec("timm") is None:
+            raise ImportError(
+                "DETR requires the optional 'timm' dependency for its image backbone. "
+                "Install it to use '--model-type detr'."
+            )
         
         # Load processor and model
-        self.processor = AutoImageProcessor.from_pretrained(model_id)
-        self.model = AutoModelForObjectDetection.from_pretrained(model_id)
+        self.processor = transformers.AutoImageProcessor.from_pretrained(model_id)
+        self.model = transformers.AutoModelForObjectDetection.from_pretrained(model_id)
         self.model.to(self.device)
         self.model.eval()
 

@@ -1,6 +1,7 @@
 from PIL import Image
 from ultralytics import YOLO
 from models.detector_interface import BaseDetector
+from core.tracking import TRACKER, update_tracked_objects
 
 class YoloDetector(BaseDetector):
     def __init__(self, model_id: str, device: str, confidence_threshold: float):
@@ -45,4 +46,29 @@ class YoloDetector(BaseDetector):
                 "box": xyxy
             })
             
+        return detections
+
+    def track(self, frame, current_time_seconds: float, screen_time_increment: float, tracked_objects: dict) -> list:
+        """Runs YOLO object tracking on a frame and updates tracked object state."""
+        results = self.model.track(
+            frame,
+            persist=True,
+            tracker=TRACKER,
+            conf=self.confidence_threshold,
+            verbose=False,
+            device=self.device,
+        )
+
+        detections = []
+        for result in results:
+            detections.extend(
+                update_tracked_objects(
+                    result.boxes,
+                    self.model.names,
+                    current_time_seconds,
+                    screen_time_increment,
+                    tracked_objects,
+                )
+            )
+
         return detections
