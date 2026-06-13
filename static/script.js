@@ -22,11 +22,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const syncModelFields = () => {
         if (modelTypeSelect.value === 'yolo') {
-            modelIdGroup.classList.remove('hidden');
             modelIdSelect.disabled = false;
+            modelIdGroup.classList.remove('field-disabled');
         } else {
-            modelIdGroup.classList.add('hidden');
             modelIdSelect.disabled = true;
+            modelIdGroup.classList.add('field-disabled');
         }
     };
     modelTypeSelect.addEventListener('change', syncModelFields);
@@ -163,7 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             
             if (data.status === 'completed') {
-                showResults(data.results);
+                showResults(data.results, data.model_info);
             } else if (data.status === 'error') {
                 showError(data.error || 'Unknown error occurred during analysis');
             } else {
@@ -201,13 +201,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Display functions
-    function showResults(results) {
+    function showResults(results, modelInfo) {
         loadingOverlay.classList.add('hidden');
         resultsPanel.classList.remove('hidden');
 
         // Set filename in the result header
         const filename = fileInput.files.length > 0 ? fileInput.files[0].name : 'Analysis Complete';
         document.getElementById('result-filename').textContent = filename;
+
+        const metaDisplay = document.getElementById('meta-info-display');
+        if (metaDisplay) {
+            if (modelInfo) {
+                metaDisplay.style.display = 'flex';
+                metaDisplay.innerHTML = `
+                    <span>Detector: <strong>${modelInfo.model_type || 'Unknown'}</strong></span>
+                    <span>Model: <strong>${modelInfo.model_name || 'Unknown'}</strong></span>
+                    <span>Device: <strong>${modelInfo.device || 'Unknown'}</strong></span>
+                `;
+            } else {
+                metaDisplay.style.display = 'none';
+            }
+        }
         
         const videoPlayer = document.getElementById('result-video');
         const downloadCsv = document.getElementById('download-csv');
@@ -308,6 +322,12 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('qa-output-section').classList.add('hidden');
         document.getElementById('analysis-downloads').closest('.output-section').classList.add('hidden');
 
+        const metaDisplay = document.getElementById('meta-info-display');
+        if (metaDisplay) {
+            metaDisplay.innerHTML = '';
+            metaDisplay.style.display = 'none';
+        }
+
         errorPanel.classList.add('hidden');
         resultsPanel.classList.add('hidden');
         mainPanel.classList.remove('hidden');
@@ -326,7 +346,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(data => {
                 if (data.status === 'completed') {
-                    showResults(data.results);
+                    showResults(data.results, data.model_info);
                     fileNameDisplay.textContent = videoParam;
                     mainPanel.classList.add('hidden');
                 }

@@ -50,13 +50,13 @@
                             <label for="model_type">Model Type</label>
                             <select id="model_type" name="model_type">
                                 <option value="detr">DETR (ResNet-50)</option>
-                                <option value="yolo">YOLO (v8 Nano)</option>
+                                <option value="yolo">YOLO</option>
                             </select>
                         </div>
 
-                        <div class="param-group hidden" id="model_id_group">
-                            <label for="model_id_select">Model ID (for YOLO model)</label>
-                            <select id="model_id_select" name="model_id" disabled>
+                        <div class="param-group" id="model_id_group">
+                            <label for="model_id_select">Select YOLO Model</label>
+                            <select id="model_id_select" name="model_id">
                                 <option value="yolov8n.pt">YOLOv8 Nano (yolov8n.pt)</option>
                                 <option value="yolov8s.pt">YOLOv8 Small (yolov8s.pt)</option>
                                 <option value="yolov8m.pt">YOLOv8 Medium (yolov8m.pt)</option>
@@ -118,9 +118,9 @@
                         <!-- Output config: two side-by-side cards -->
                         <div class="param-group full-width output-config-grid">
 
-                            <!-- Card 1: Analysis outputs -->
+                            <!-- Card 1: Video Analysis -->
                             <div class="output-config-card">
-                                <p class="output-config-title">Analysis Outputs</p>
+                                <p class="output-config-title">Video Analysis</p>
                                 <div class="checkbox-grid">
                                     <label class="checkbox-label">
                                         <input type="checkbox" id="generate_video" name="generate_video" checked>
@@ -128,11 +128,11 @@
                                     </label>
                                     <label class="checkbox-label">
                                         <input type="checkbox" id="generate_csv" name="generate_csv" checked>
-                                        <span>Counts CSV</span>
+                                        <span>Video Analysis CSV</span>
                                     </label>
                                     <label class="checkbox-label">
                                         <input type="checkbox" id="generate_json" name="generate_json" checked>
-                                        <span>Analysis JSON</span>
+                                        <span>Video Analysis JSON</span>
                                     </label>
                                 </div>
                             </div>
@@ -191,7 +191,8 @@
                     </span>
                     <span id="result-filename">Analysis Complete</span>
                 </h2>
-                                   <div class="results-content">
+                <div class="analysis-meta-info" id="meta-info-display"></div>
+                <div class="results-content">
                         <div class="video-container">
                             <video id="result-video" controls>
                                 Your browser does not support the video tag.
@@ -199,15 +200,15 @@
                         </div>
 
                         <div class="output-section hidden">
-                            <p class="output-section-label">Analysis Outputs</p>
+                            <p class="output-section-label">Video Analysis</p>
                             <div class="download-links" id="analysis-downloads">
                                 <a id="download-csv" href="#" class="secondary-btn" download>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                    Download Counts CSV
+                                    Download Video Analysis CSV
                                 </a>
                                 <a id="download-json" href="#" class="secondary-btn" download>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                                    Download Analysis JSON
+                                    Download Video Analysis JSON
                                 </a>
                                 <a id="download-video" href="#" class="secondary-btn" download>
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>

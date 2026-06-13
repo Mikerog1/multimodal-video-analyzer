@@ -77,6 +77,13 @@ def run_analysis(
             
         processor = VideoProcessor(detector)
         
+        # Store model info in task dict
+        tasks[task_id]["model_info"] = {
+            "model_type": "YOLO" if model_type == "yolo" else "DETR",
+            "model_name": detector.model_id.split(os.sep)[-1].split('/')[-1] if hasattr(detector, "model_id") else str(model_id),
+            "device": str(detector.device).upper() if hasattr(detector, "device") else str(device).upper()
+        }
+        
         tasks[task_id]["status"] = "analyzing"
         
         # Override print to capture some output if needed, but for now we just run it
@@ -179,6 +186,7 @@ async def analyze_video(
         "progress": 0,
         "filename": file.filename,
         "results": None,
+        "model_info": None,
         "error": None
     }
     
@@ -281,7 +289,25 @@ async def get_results(video: str):
         "qa_json_files": [f"/output/{latest_folder}/{f}" for f in qa_json_files],
     }
     
-    return {"status": "completed", "results": results}
+    import json as py_json
+    model_info = None
+    if json_file:
+        try:
+            with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
+                report_data = py_json.load(jf)
+                meta = report_data.get("metadata", {})
+                m_id = meta.get("model", "unknown")
+                dev = meta.get("device", "cpu")
+                m_type = "YOLO" if ("yolo" in m_id.lower() or m_id.endswith(".pt")) else "DETR"
+                model_info = {
+                    "model_type": m_type,
+                    "model_name": m_id.split(os.sep)[-1].split('/')[-1],
+                    "device": str(dev).upper()
+                }
+        except Exception as e:
+            print(f"[-] Error reading metadata from json: {e}")
+            
+    return {"status": "completed", "results": results, "model_info": model_info}
 
 if __name__ == "__main__":
     import uvicorn

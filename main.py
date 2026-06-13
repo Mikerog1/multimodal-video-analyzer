@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model-id",
         type=str,
         default=None,
-        help="YOLOv8 model path like 'yolov8n.pt'. Defaults to bundled models/yolov8n.pt for YOLO.",
+        help="Model path or ID. For YOLO: e.g. 'yolov8n.pt' (default). For DETR: HuggingFace ID like 'facebook/detr-resnet-50' (default).",
     )
     analyze_parser.add_argument(
         "--device",
@@ -124,21 +124,26 @@ def find_input_videos(input_path: Path) -> list[Path]:
 
 
 def load_detector(args):
-    if args.model_type != "yolo":
-        raise ValueError("Analyzer-style object tracking requires --model-type yolo.")
-
     device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
     if args.device == "auto" and not torch.cuda.is_available():
         device = "cpu"
 
-    model_id = args.model_id or os.path.join("models", "yolov8n.pt")
-
-    from models.yolo_detector import YoloDetector
-
     print(f"\n[+] Target Execution Device: {device.upper()}")
-    print(f"[+] Loading YOLO model: {model_id}...")
     t0 = time.time()
-    detector = YoloDetector(model_id, device, args.confidence)
+
+    if args.model_type == "yolo":
+        model_id = args.model_id or os.path.join("models", "yolov8n.pt")
+        from models.yolo_detector import YoloDetector
+        print(f"[+] Loading YOLO model: {model_id}...")
+        detector = YoloDetector(model_id, device, args.confidence)
+    elif args.model_type == "detr":
+        model_id = args.model_id or "facebook/detr-resnet-50"
+        from models.detr_detector import DetrDetector
+        print(f"[+] Loading DETR model: {model_id}...")
+        detector = DetrDetector(model_id, device, args.confidence)
+    else:
+        raise ValueError(f"Unknown model type: {args.model_type}")
+
     print(f"[+] Model loaded in {time.time() - t0:.2f} seconds.")
     return detector
 

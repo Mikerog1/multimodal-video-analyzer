@@ -15,6 +15,8 @@ from utils.overlay_renderer import draw_overlays
 from utils.report_generator import get_video_report_path, write_json_report, write_video_report, save_qa_report
 from utils.time_utils import seconds_to_timestamp
 from core.qa_generator import QAGenerator
+from core.tracking import SimpleTracker
+from PIL import Image
 
 
 class VideoProcessor:
@@ -35,10 +37,7 @@ class VideoProcessor:
         qa_categories: list = None,
         progress_callback=None,
     ) -> None:
-        """Processes the video with YOLO tracking and writes analyzer-style reports."""
-        if not hasattr(self.detector, "track"):
-            print("[-] Error: Analyzer-style reports require YOLO object tracking. Use --model-type yolo.")
-            return
+        """Processes the video with object detection/tracking and writes reports."""
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -61,12 +60,15 @@ class VideoProcessor:
         out_width = int(width * resize_factor) if 0.1 <= resize_factor < 1.0 else width
         out_height = int(height * resize_factor) if 0.1 <= resize_factor < 1.0 else height
 
+        uses_builtin_tracker = hasattr(self.detector, "track")
+        tracking_label = "tracking" if uses_builtin_tracker else "detection"
+
         if fps_sample > 0:
             sample_step = int(max(1, round(video_fps / fps_sample)))
-            print(f"[+] Sampling Mode: Running YOLO tracking every {sample_step} frames (~{fps_sample} frame(s) per second)")
+            print(f"[+] Sampling Mode: Running {tracking_label} every {sample_step} frames (~{fps_sample} frame(s) per second)")
         else:
             sample_step = 1
-            print("[+] Sampling Mode: Running YOLO tracking on EVERY frame")
+            print(f"[+] Sampling Mode: Running {tracking_label} on EVERY frame")
 
         sample_duration = sample_step / video_fps
         out_fps = min(fps_sample, video_fps) if save_sampled_only and fps_sample > 0 else video_fps
@@ -94,8 +96,9 @@ class VideoProcessor:
         processed_frames_data = []  # Stores per-frame data for QA generation
         model_name = getattr(self.detector, "model_id", "custom").split('/')[-1]
         device = getattr(self.detector, "device", "cpu")
+        simple_tracker = None if uses_builtin_tracker else SimpleTracker()
 
-        print("\n[+] Analyzing video frames with object tracking...")
+        print("\n[+] Analyzing video frames...")
         for frame_idx in tqdm(range(total_frames), desc="Analyzing Frames"):
             if progress_callback:
                 progress_callback(frame_idx, total_frames)
@@ -110,12 +113,19 @@ class VideoProcessor:
             if should_infer:
                 remaining_duration = max(0.0, duration - elapsed_sec)
                 screen_time_increment = min(sample_duration, remaining_duration)
-                active_detections = self.detector.track(
-                    frame,
-                    elapsed_sec,
-                    screen_time_increment,
-                    tracked_objects,
-                )
+
+                if uses_builtin_tracker:
+                    # YOLO path: built-in ByteTrack
+                    active_detections = self.detector.track(
+                        frame, elapsed_sec, screen_time_increment, tracked_objects,
+                    )
+                else:
+                    # Detect-only path (DETR, etc.): run .detect() + SimpleTracker
+                    pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    raw_detections = self.detector.detect(pil_image)
+                    active_detections = simple_tracker.update(
+                        raw_detections, elapsed_sec, screen_time_increment, tracked_objects,
+                    )
 
                 # Collect frame-level data for QA generation
                 gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)

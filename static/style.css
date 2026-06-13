@@ -682,3 +682,41 @@ video {
     box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.4);
 }
 
+/* Disabled field state (e.g. YOLO Model when DETR is selected) */
+.param-group.field-disabled > label {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.param-group.field-disabled > select {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Analysis meta info badge style */
+.analysis-meta-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-top: -0.5rem;
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.analysis-meta-info span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.analysis-meta-info strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
