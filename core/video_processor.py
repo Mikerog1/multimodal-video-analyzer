@@ -12,8 +12,9 @@ from tqdm import tqdm
 from datetime import timedelta
 
 from utils.overlay_renderer import draw_overlays
-from utils.report_generator import get_video_report_path, write_json_report, write_video_report
+from utils.report_generator import get_video_report_path, write_json_report, write_video_report, save_qa_report
 from utils.time_utils import seconds_to_timestamp
+from core.qa_generator import QAGenerator
 
 
 class VideoProcessor:
@@ -30,6 +31,8 @@ class VideoProcessor:
         resize_factor: float = 1.0,
         save_sampled_only: bool = False,
         write_json: bool = False,
+        generate_qa: bool = True,
+        qa_categories: list = None,
         progress_callback=None,
     ) -> None:
         """Processes the video with YOLO tracking and writes analyzer-style reports."""
@@ -88,6 +91,7 @@ class VideoProcessor:
 
         tracked_objects = {}
         active_detections = []
+        processed_frames_data = []  # Stores per-frame data for QA generation
         model_name = getattr(self.detector, "model_id", "custom").split('/')[-1]
         device = getattr(self.detector, "device", "cpu")
 
@@ -112,6 +116,19 @@ class VideoProcessor:
                     screen_time_increment,
                     tracked_objects,
                 )
+
+                # Collect frame-level data for QA generation
+                gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                processed_frames_data.append({
+                    "frame_idx": frame_idx,
+                    "timestamp": elapsed_sec,
+                    "detections": [
+                        {"label": d.object_type, "box": [d.x1, d.y1, d.x2, d.y2], "score": d.confidence}
+                        for d in active_detections
+                    ],
+                    "blur_var": cv2.Laplacian(gray_frame, cv2.CV_64F).var(),
+                    "brightness": gray_frame.mean(),
+                })
 
             cumulative_counts = self._count_tracked_objects(tracked_objects)
             overlay_detections = [detection.to_overlay_detection() for detection in active_detections]
@@ -152,7 +169,15 @@ class VideoProcessor:
                 ),
             )
 
-        self.print_cli_summary(filename, duration, tracked_objects, out_video_path, str(out_csv_path), out_json_path if write_json else None)
+        # Generate and save QA pairs
+        out_qa_paths = []
+        if generate_qa:
+            qa_cats = qa_categories if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
+            qa_generator = QAGenerator(filename, processed_frames_data, duration, qa_categories=qa_cats)
+            qa_by_category = qa_generator.generate_qa_pairs()
+            out_qa_paths = save_qa_report(run_output_dir, base_name, qa_by_category)
+
+        self.print_cli_summary(filename, duration, tracked_objects, out_video_path, str(out_csv_path), out_json_path if write_json else None, out_qa_paths)
 
     def _count_tracked_objects(self, tracked_objects: dict) -> dict:
         counts = {}
@@ -207,6 +232,7 @@ class VideoProcessor:
         out_video: str,
         out_csv: str,
         out_json: str | None = None,
+        out_qa_paths: list = None,
     ) -> None:
         """Prints a summary table of tracked object counts to the console."""
         counts = {"person": 0, "car": 0, "truck": 0, "other": 0}
@@ -235,4 +261,6 @@ class VideoProcessor:
         print(f"  - CSV Report      : {os.path.abspath(out_csv)}")
         if out_json is not None:
             print(f"  - JSON Report     : {os.path.abspath(out_json)}")
+        for qa_path in (out_qa_paths or []):
+            print(f"  - QA Pairs JSON   : {os.path.abspath(qa_path)}")
         print(f"{border}\n")

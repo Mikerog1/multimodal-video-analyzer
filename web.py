@@ -51,9 +51,6 @@ def run_analysis(
     fps_sample: float,
     resize_factor: float,
     save_sampled_only: bool,
-    generate_video: bool,
-    generate_csv: bool,
-    generate_json: bool,
     generate_qa: bool,
     qa_categories: str
 ):
@@ -102,9 +99,6 @@ def run_analysis(
             codec=codec,
             resize_factor=resize_factor,
             save_sampled_only=save_sampled_only,
-            generate_video=generate_video,
-            generate_csv=generate_csv,
-            generate_json=generate_json,
             generate_qa=generate_qa,
             qa_categories=qa_cats,
             progress_callback=update_progress
@@ -120,8 +114,8 @@ def run_analysis(
             # Find the output files
             files = os.listdir(run_path)
             video_file = next((f for f in files if f.endswith('.mp4')), None)
-            csv_file = next((f for f in files if f.endswith('.csv')), None)
-            json_file = next((f for f in files if f.endswith('_analysis.json')), None)
+            csv_file = next((f for f in files if f.endswith('.csv') and f != 'total_report.csv'), None)
+            json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
             qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
             
             tasks[task_id]["results"] = {
@@ -166,9 +160,6 @@ async def analyze_video(
     fps_sample: float = Form(1.0),
     resize_factor: float = Form(1.0),
     save_sampled_only: bool = Form(False),
-    generate_video: bool = Form(True),
-    generate_csv: bool = Form(True),
-    generate_json: bool = Form(True),
     generate_qa: bool = Form(True),
     qa_categories: str = Form("")
 ):
@@ -207,9 +198,6 @@ async def analyze_video(
         fps_sample, 
         resize_factor, 
         save_sampled_only,
-        generate_video,
-        generate_csv,
-        generate_json,
         generate_qa,
         qa_categories
     )
