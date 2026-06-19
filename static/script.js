@@ -84,9 +84,119 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ─── Sidebar ───
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    const sidebarOpenBtn = document.getElementById('sidebar-open-btn');
+    const historyList = document.getElementById('history-list');
+    const newAnalysisBtn = document.getElementById('new-analysis-btn');
+
+    sidebarToggle.addEventListener('click', () => {
+        sidebar.classList.add('collapsed');
+        sidebarOpenBtn.classList.remove('hidden');
+    });
+
+    sidebarOpenBtn.addEventListener('click', () => {
+        sidebar.classList.remove('collapsed');
+        sidebarOpenBtn.classList.add('hidden');
+    });
+
+    // New Analysis button in sidebar — resets to upload form
+    newAnalysisBtn.addEventListener('click', () => {
+        resetApp();
+    });
+
+    // ─── Advanced Settings Toggle ───
+    const advancedToggle = document.getElementById('advanced-settings-toggle');
+    const advancedContent = document.getElementById('advanced-settings-content');
+
+    advancedToggle.addEventListener('click', () => {
+        advancedToggle.classList.toggle('open');
+        advancedContent.classList.toggle('open');
+    });
+
+    // Currently active history folder (for highlighting)
+    let activeHistoryFolder = null;
+
+    function loadHistory() {
+        fetch('/api/history')
+            .then(res => res.json())
+            .then(runs => {
+                renderHistoryList(runs);
+            })
+            .catch(err => {
+                console.error('Failed to load history:', err);
+            });
+    }
+
+    function renderHistoryList(runs) {
+        if (!runs || runs.length === 0) {
+            historyList.innerHTML = `
+                <div class="sidebar-empty">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <p>No analyses yet</p>
+                </div>
+            `;
+            return;
+        }
+
+        historyList.innerHTML = '';
+        runs.forEach(run => {
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            if (run.folder === activeHistoryFolder) {
+                item.classList.add('active');
+            }
+            item.dataset.folder = run.folder;
+
+            const modelBadge = run.model_info
+                ? `<span class="meta-badge">${run.model_info.model_type}</span>`
+                : '';
+
+            item.innerHTML = `
+                <div class="history-item-name" title="${run.video_name || run.folder}">${run.video_name || run.folder}</div>
+                <div class="history-item-meta">
+                    <span>${run.run_date || '—'}</span>
+                    ${modelBadge}
+                </div>
+            `;
+
+            item.addEventListener('click', () => {
+                loadHistoryDetail(run);
+                // Highlight active item
+                activeHistoryFolder = run.folder;
+                historyList.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+            });
+
+            historyList.appendChild(item);
+        });
+    }
+
+    function loadHistoryDetail(run) {
+        // Show results from a history entry
+        const results = run.files;
+        const modelInfo = run.model_info;
+        const analysisSettings = run.analysis_settings;
+
+        // Translate files structure to the same format showResults expects
+        const normalizedResults = {
+            folder: `/output/${run.folder}`,
+            video: results.video,
+            csv: results.csv,
+            json: results.json,
+            qa_json_files: results.qa_json_files || [],
+        };
+
+        showResults(normalizedResults, modelInfo, run.video_name || run.folder, analysisSettings);
+    }
+
     // Form submission
     const form = document.getElementById('upload-form');
-    const mainPanel = document.querySelector('.main-panel');
+    const mainPanel = document.getElementById('main-panel');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingStatus = document.getElementById('loading-status');
     const resultsPanel = document.getElementById('results-panel');
@@ -113,6 +223,10 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.set('generate_video', document.getElementById('generate_video').checked ? 'true' : 'false');
         formData.set('generate_csv', document.getElementById('generate_csv').checked ? 'true' : 'false');
         formData.set('generate_json', document.getElementById('generate_json').checked ? 'true' : 'false');
+
+        // Processing options
+        formData.set('remove_audio', document.getElementById('remove_audio').checked ? 'true' : 'false');
+        formData.set('mask_persons', document.getElementById('mask_persons').checked ? 'true' : 'false');
 
         // Compile QA Categories — generate_qa is true if any category is checked
         const activeQaCategories = [];
@@ -163,7 +277,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             
             if (data.status === 'completed') {
-                showResults(data.results, data.model_info);
+                showResults(data.results, data.model_info, undefined, data.analysis_settings);
+                // Refresh the sidebar history to include the new run
+                loadHistory();
             } else if (data.status === 'error') {
                 showError(data.error || 'Unknown error occurred during analysis');
             } else {
@@ -200,24 +316,52 @@ document.addEventListener('DOMContentLoaded', () => {
         return `/api/download?path=${encodeURIComponent(path)}`;
     }
 
+    // Helper: build a streaming video URL from an output-relative path
+    function streamVideoUrl(path) {
+        return `/api/stream-video?path=${encodeURIComponent(path)}`;
+    }
+
     // Display functions
-    function showResults(results, modelInfo) {
+    function showResults(results, modelInfo, displayName, analysisSettings) {
         loadingOverlay.classList.add('hidden');
+        mainPanel.classList.add('hidden');
         resultsPanel.classList.remove('hidden');
+        errorPanel.classList.add('hidden');
 
         // Set filename in the result header
-        const filename = fileInput.files.length > 0 ? fileInput.files[0].name : 'Analysis Complete';
+        const filename = displayName || (fileInput.files.length > 0 ? fileInput.files[0].name : 'Analysis Complete');
         document.getElementById('result-filename').textContent = filename;
 
         const metaDisplay = document.getElementById('meta-info-display');
         if (metaDisplay) {
-            if (modelInfo) {
-                metaDisplay.style.display = 'flex';
-                metaDisplay.innerHTML = `
-                    <span>Detector: <strong>${modelInfo.model_type || 'Unknown'}</strong></span>
-                    <span>Model: <strong>${modelInfo.model_name || 'Unknown'}</strong></span>
-                    <span>Device: <strong>${modelInfo.device || 'Unknown'}</strong></span>
-                `;
+            const hasModel = modelInfo && (modelInfo.model_type || modelInfo.model_name);
+            const hasSettings = analysisSettings && Object.values(analysisSettings).some(v => v != null);
+            if (hasModel || hasSettings) {
+                metaDisplay.style.display = 'grid';
+                let html = '';
+                if (hasModel) {
+                    html += `<span>Detector: <strong>${modelInfo.model_type || '—'}</strong></span>`;
+                    html += `<span>Model: <strong>${modelInfo.model_name || '—'}</strong></span>`;
+                }
+                if (hasSettings) {
+                    if (analysisSettings.resolution)
+                        html += `<span>Resolution: <strong>${analysisSettings.resolution}</strong></span>`;
+                    if (analysisSettings.total_frames != null)
+                        html += `<span>Frames: <strong>${analysisSettings.total_frames.toLocaleString()}</strong></span>`;
+                    if (analysisSettings.fps != null)
+                        html += `<span>FPS: <strong>${analysisSettings.fps}</strong></span>`;
+                    if (analysisSettings.duration_seconds != null) {
+                        const dur = analysisSettings.duration_seconds;
+                        const mins = Math.floor(dur / 60);
+                        const secs = Math.round(dur % 60);
+                        html += `<span>Duration: <strong>${mins}:${String(secs).padStart(2,'0')}</strong></span>`;
+                    }
+                    if (analysisSettings.fps_sample != null)
+                        html += `<span>FPS Sampling: <strong>${analysisSettings.fps_sample}</strong></span>`;
+                    if (analysisSettings.confidence_threshold != null)
+                        html += `<span>Confidence: <strong>${analysisSettings.confidence_threshold}</strong></span>`;
+                }
+                metaDisplay.innerHTML = html;
             } else {
                 metaDisplay.style.display = 'none';
             }
@@ -232,13 +376,41 @@ document.addEventListener('DOMContentLoaded', () => {
         let hasAnalysisFiles = false;
         if (results.video) {
             hasAnalysisFiles = true;
-            videoPlayer.src = results.video;
+            const videoContainer = videoPlayer.closest('.video-container');
+
+            // Reset any previous error state
+            const existingError = videoContainer.querySelector('.video-error-msg');
+            if (existingError) existingError.remove();
+            videoPlayer.style.display = 'block';
+
+            videoPlayer.src = streamVideoUrl(results.video);
             videoPlayer.load();
+            videoContainer.style.display = 'block';
             downloadVideo.href = downloadUrl(results.video);
             downloadVideo.removeAttribute('download');
             downloadVideo.style.display = 'flex';
+
+            // Handle video decode errors (e.g., mp4v codec not supported by browser)
+            videoPlayer.onerror = () => {
+                videoPlayer.style.display = 'none';
+                if (!videoContainer.querySelector('.video-error-msg')) {
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'video-error-msg';
+                    errorMsg.innerHTML = `
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.5">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="15" y1="9" x2="9" y2="15"></line>
+                            <line x1="9" y1="9" x2="15" y2="15"></line>
+                        </svg>
+                        <p>This video uses a codec (mp4v) that your browser cannot play.</p>
+                        <p class="video-error-hint">Use the download button below to play it locally, or re-analyze with the <strong>avc1 (H.264)</strong> codec for browser playback.</p>
+                    `;
+                    videoContainer.appendChild(errorMsg);
+                }
+            };
         } else {
             videoPlayer.style.display = 'none';
+            videoPlayer.closest('.video-container').style.display = 'none';
             downloadVideo.style.display = 'none';
         }
         
@@ -328,6 +500,10 @@ document.addEventListener('DOMContentLoaded', () => {
             metaDisplay.style.display = 'none';
         }
 
+        // Deselect history item
+        activeHistoryFolder = null;
+        historyList.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+
         errorPanel.classList.add('hidden');
         resultsPanel.classList.add('hidden');
         mainPanel.classList.remove('hidden');
@@ -346,7 +522,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(data => {
                 if (data.status === 'completed') {
-                    showResults(data.results, data.model_info);
+                    showResults(data.results, data.model_info, videoParam, data.analysis_settings);
                     fileNameDisplay.textContent = videoParam;
                     mainPanel.classList.add('hidden');
                 }
@@ -355,4 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log('No preloaded results found:', err.message);
             });
     }
+
+    // Load history on startup
+    loadHistory();
 });

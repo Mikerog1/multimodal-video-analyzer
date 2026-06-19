@@ -36,6 +36,7 @@ class VideoProcessor:
         generate_qa: bool = True,
         qa_categories: list = None,
         progress_callback=None,
+        mask_persons: bool = False,
     ) -> None:
         """Processes the video with object detection/tracking and writes reports."""
 
@@ -144,6 +145,20 @@ class VideoProcessor:
             overlay_detections = [detection.to_overlay_detection() for detection in active_detections]
 
             if not save_sampled_only or should_infer:
+                # Apply person masking (blur) before drawing overlays
+                if mask_persons and active_detections:
+                    for det in active_detections:
+                        if det.object_type == "person":
+                            bx1 = max(0, int(det.x1))
+                            by1 = max(0, int(det.y1))
+                            bx2 = min(width, int(det.x2))
+                            by2 = min(height, int(det.y2))
+                            if bx2 > bx1 and by2 > by1:
+                                roi = frame[by1:by2, bx1:bx2]
+                                # Use large kernel for strong anonymization blur
+                                ksize = max(51, (min(bx2 - bx1, by2 - by1) // 4) | 1)
+                                frame[by1:by2, bx1:bx2] = cv2.GaussianBlur(roi, (ksize, ksize), 30)
+
                 annotated_frame = draw_overlays(
                     frame,
                     overlay_detections,

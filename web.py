@@ -2,10 +2,11 @@ import os
 import sys
 import uuid
 import asyncio
+import json as py_json
 import concurrent.futures
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, StreamingResponse
 
 # Add core directory to PATH on Windows to allow OpenCV to locate the openh264 DLL
 if os.name == 'nt':
@@ -52,7 +53,8 @@ def run_analysis(
     resize_factor: float,
     save_sampled_only: bool,
     generate_qa: bool,
-    qa_categories: str
+    qa_categories: str,
+    mask_persons: bool = False,
 ):
     try:
         tasks[task_id]["status"] = "loading_model"
@@ -108,7 +110,8 @@ def run_analysis(
             save_sampled_only=save_sampled_only,
             generate_qa=generate_qa,
             qa_categories=qa_cats,
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            mask_persons=mask_persons,
         )
         
         current_folders = set(os.listdir(output_dir))
@@ -132,6 +135,19 @@ def run_analysis(
                 "json": f"/output/{run_folder}/{json_file}" if json_file else None,
                 "qa_json_files": [f"/output/{run_folder}/{f}" for f in qa_json_files],
             }
+
+            # Read analysis settings from the generated JSON
+            analysis_settings = None
+            if json_file:
+                try:
+                    with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
+                        report_data = py_json.load(jf)
+                        meta = report_data.get("metadata", {})
+                        analysis_settings = _extract_analysis_settings(meta)
+                except Exception:
+                    pass
+            tasks[task_id]["analysis_settings"] = analysis_settings
+
             tasks[task_id]["status"] = "completed"
         else:
             tasks[task_id]["status"] = "error"
@@ -168,7 +184,9 @@ async def analyze_video(
     resize_factor: float = Form(1.0),
     save_sampled_only: bool = Form(False),
     generate_qa: bool = Form(True),
-    qa_categories: str = Form("")
+    qa_categories: str = Form(""),
+    remove_audio: bool = Form(False),
+    mask_persons: bool = Form(False),
 ):
     task_id = str(uuid.uuid4())
     
@@ -187,6 +205,7 @@ async def analyze_video(
         "filename": file.filename,
         "results": None,
         "model_info": None,
+        "analysis_settings": None,
         "error": None
     }
     
@@ -207,7 +226,8 @@ async def analyze_video(
         resize_factor, 
         save_sampled_only,
         generate_qa,
-        qa_categories
+        qa_categories,
+        mask_persons,
     )
     
     return {"task_id": task_id, "status": "pending"}
@@ -289,8 +309,8 @@ async def get_results(video: str):
         "qa_json_files": [f"/output/{latest_folder}/{f}" for f in qa_json_files],
     }
     
-    import json as py_json
     model_info = None
+    analysis_settings = None
     if json_file:
         try:
             with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
@@ -304,10 +324,192 @@ async def get_results(video: str):
                     "model_name": m_id.split(os.sep)[-1].split('/')[-1],
                     "device": str(dev).upper()
                 }
+                analysis_settings = _extract_analysis_settings(meta)
         except Exception as e:
             print(f"[-] Error reading metadata from json: {e}")
             
-    return {"status": "completed", "results": results, "model_info": model_info}
+    return {"status": "completed", "results": results, "model_info": model_info, "analysis_settings": analysis_settings}
+
+
+def _extract_analysis_settings(meta: dict) -> dict:
+    """Extract analysis-relevant settings from a metadata dict."""
+    return {
+        "resolution": meta.get("resolution"),
+        "fps": meta.get("fps"),
+        "total_frames": meta.get("total_frames"),
+        "duration_seconds": meta.get("duration_seconds"),
+        "confidence_threshold": meta.get("confidence_threshold"),
+        "fps_sample": meta.get("fps_sample"),
+    }
+
+
+def _parse_run_folder(folder_name: str) -> dict | None:
+    """Extract metadata from a single results folder and return a summary dict."""
+    run_path = os.path.join(output_dir, folder_name)
+    if not os.path.isdir(run_path):
+        return None
+
+    files = os.listdir(run_path)
+    video_file = next((f for f in files if f.endswith('.mp4')), None)
+    csv_file = next((f for f in files if f.endswith('.csv') and f != 'total_report.csv'), None)
+    json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
+    qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
+
+    # Extract video name and timestamp from folder name pattern: results_<name>_YYYYMMDD_HHMM
+    # May also contain a UUID prefix: results_<uuid>_<name>_YYYYMMDD_HHMM
+    parts = folder_name.split('_')
+    # Last two parts are date and time
+    run_date = None
+    if len(parts) >= 3:
+        date_part = parts[-2]  # e.g. "20260611"
+        time_part = parts[-1]  # e.g. "2007"
+        if len(date_part) == 8 and date_part.isdigit() and len(time_part) == 4 and time_part.isdigit():
+            run_date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]} {time_part[:2]}:{time_part[2:]}"
+
+    # Video name: everything between "results_" prefix and the last _YYYYMMDD_HHMM
+    prefix = "results_"
+    name_part = folder_name[len(prefix):] if folder_name.startswith(prefix) else folder_name
+    # Remove the trailing _YYYYMMDD_HHMM
+    if run_date and len(parts) >= 3:
+        name_part = '_'.join(name_part.split('_')[:-2])
+
+    # Try to read model info + analysis settings from analysis JSON
+    model_info = None
+    analysis_settings = None
+    if json_file:
+        try:
+            with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
+                report_data = py_json.load(jf)
+                meta = report_data.get("metadata", {})
+                m_id = meta.get("model", "unknown")
+                dev = meta.get("device", "cpu")
+                m_type = "YOLO" if ("yolo" in m_id.lower() or m_id.endswith(".pt")) else "DETR"
+                model_info = {
+                    "model_type": m_type,
+                    "model_name": m_id.split(os.sep)[-1].split('/')[-1],
+                    "device": str(dev).upper()
+                }
+                analysis_settings = _extract_analysis_settings(meta)
+        except Exception:
+            pass
+
+    return {
+        "folder": folder_name,
+        "video_name": name_part,
+        "run_date": run_date,
+        "model_info": model_info,
+        "analysis_settings": analysis_settings,
+        "files": {
+            "video": f"/output/{folder_name}/{video_file}" if video_file else None,
+            "csv": f"/output/{folder_name}/{csv_file}" if csv_file else None,
+            "json": f"/output/{folder_name}/{json_file}" if json_file else None,
+            "qa_json_files": [f"/output/{folder_name}/{f}" for f in qa_json_files],
+        },
+    }
+
+
+@app.get("/api/history")
+async def get_history():
+    """Return a list of all analysis runs found in the output directory, newest first."""
+    if not os.path.exists(output_dir):
+        return []
+
+    folders = sorted(
+        (f for f in os.listdir(output_dir)
+         if f.startswith("results_") and os.path.isdir(os.path.join(output_dir, f))),
+        reverse=True,
+    )
+
+    runs = []
+    for folder_name in folders:
+        entry = _parse_run_folder(folder_name)
+        if entry:
+            runs.append(entry)
+    return runs
+
+
+@app.get("/api/history/{folder_name}")
+async def get_history_detail(folder_name: str):
+    """Return the full detail (files + model info) for a single analysis run."""
+    if not folder_name.startswith("results_"):
+        return JSONResponse(status_code=400, content={"error": "Invalid folder name"})
+
+    entry = _parse_run_folder(folder_name)
+    if not entry:
+        return JSONResponse(status_code=404, content={"error": "Run not found"})
+    return entry
+
+
+@app.get("/api/stream-video")
+async def stream_video(request: Request, path: str):
+    """Stream a video file with Range header support for browser playback.
+
+    Browsers need Range requests to seek within videos.  The default
+    StaticFiles mount does not always handle this reliably for large files
+    produced by OpenCV, so this dedicated endpoint ensures correct
+    Content-Type and partial-content responses.
+    """
+    relative = path.lstrip("/")
+    if not relative.startswith("output/"):
+        return JSONResponse(status_code=400, content={"error": "Invalid path"})
+
+    file_subpath = relative[len("output/"):]
+    file_path = os.path.normpath(os.path.join(output_dir, file_subpath))
+
+    if not file_path.startswith(os.path.normpath(output_dir)):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+
+    if not os.path.isfile(file_path):
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+
+    file_size = os.path.getsize(file_path)
+    range_header = request.headers.get("range")
+
+    if range_header:
+        # Parse "bytes=start-end"
+        range_spec = range_header.replace("bytes=", "").strip()
+        parts = range_spec.split("-")
+        start = int(parts[0]) if parts[0] else 0
+        end = int(parts[1]) if parts[1] else file_size - 1
+        end = min(end, file_size - 1)
+        length = end - start + 1
+
+        def iter_file():
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        return StreamingResponse(
+            iter_file(),
+            status_code=206,
+            media_type="video/mp4",
+            headers={
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(length),
+            },
+        )
+    else:
+        def iter_full():
+            with open(file_path, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        return StreamingResponse(
+            iter_full(),
+            media_type="video/mp4",
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+            },
+        )
+
 
 if __name__ == "__main__":
     import uvicorn
