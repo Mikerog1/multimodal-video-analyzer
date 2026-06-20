@@ -1,10 +1,16 @@
 import os
 import sys
+import shutil
 
 # Add the directory containing this file to PATH on Windows to allow OpenCV to locate the openh264 DLL
 if os.name == 'nt':
     core_dir = os.path.abspath(os.path.dirname(__file__))
     os.environ['PATH'] = core_dir + os.pathsep + os.environ.get('PATH', '')
+    if hasattr(os, 'add_dll_directory'):
+        try:
+            os.add_dll_directory(core_dir)
+        except Exception:
+            pass
 
 import time
 import cv2
@@ -29,7 +35,7 @@ class VideoProcessor:
         video_path: str,
         output_dir: str,
         fps_sample: float,
-        codec: str = "mp4v",
+        codec: str = "avc1",
         resize_factor: float = 1.0,
         save_sampled_only: bool = False,
         write_json: bool = False,
@@ -37,6 +43,7 @@ class VideoProcessor:
         qa_categories: list = None,
         progress_callback=None,
         mask_persons: bool = False,
+        generate_video: bool = True,
     ) -> None:
         """Processes the video with object detection/tracking and writes reports."""
 
@@ -81,15 +88,19 @@ class VideoProcessor:
         out_csv_path = get_video_report_path(out_video_path)
         out_json_path = os.path.join(run_output_dir, f"report_{base_name}_analyzed.mp4.json")
 
-        fourcc = cv2.VideoWriter_fourcc(*codec)
-        out_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (out_width, out_height))
-        if not out_writer.isOpened():
-            cap.release()
-            print(f"[-] Error: Could not create output video: {out_video_path}")
-            return
+        out_writer = None
+        if generate_video:
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            out_writer = cv2.VideoWriter(out_video_path, fourcc, out_fps, (out_width, out_height))
+            if not out_writer.isOpened():
+                cap.release()
+                print(f"[-] Error: Could not create output video: {out_video_path}")
+                return
+        else:
+            print(f"[+] Annotated video generation disabled — will copy original video to output.")
 
         print(f"[+] Video Properties: {width}x{height} | {video_fps:.2f} FPS | {total_frames} frames | {duration:.2f} seconds")
-        if resize_factor < 1.0 or save_sampled_only or codec != "mp4v":
+        if generate_video and (resize_factor < 1.0 or save_sampled_only or codec != "mp4v"):
             print(f"[+] Output Options: Resolution={out_width}x{out_height} | Codec={codec} | FPS={out_fps:.2f} (sampled-only: {save_sampled_only})")
 
         tracked_objects = {}
@@ -144,7 +155,7 @@ class VideoProcessor:
             cumulative_counts = self._count_tracked_objects(tracked_objects)
             overlay_detections = [detection.to_overlay_detection() for detection in active_detections]
 
-            if not save_sampled_only or should_infer:
+            if generate_video and (not save_sampled_only or should_infer):
                 # Apply person masking (blur) before drawing overlays
                 if mask_persons and active_detections:
                     for det in active_detections:
@@ -175,7 +186,18 @@ class VideoProcessor:
                 out_writer.write(annotated_frame)
 
         cap.release()
-        out_writer.release()
+        if out_writer is not None:
+            out_writer.release()
+
+        # If no annotated video was generated, copy the original input video to the output folder
+        if not generate_video:
+            original_ext = os.path.splitext(video_path)[1] or '.mp4'
+            original_copy_path = os.path.join(run_output_dir, f"{base_name}_original{original_ext}")
+            try:
+                shutil.copy2(video_path, original_copy_path)
+                print(f"[+] Original video copied to: {original_copy_path}")
+            except Exception as e:
+                print(f"[-] Error copying original video: {e}")
 
         out_csv_path = write_video_report(out_csv_path, tracked_objects)
         if write_json:
@@ -202,7 +224,8 @@ class VideoProcessor:
             qa_by_category = qa_generator.generate_qa_pairs()
             out_qa_paths = save_qa_report(run_output_dir, base_name, qa_by_category)
 
-        self.print_cli_summary(filename, duration, tracked_objects, out_video_path, str(out_csv_path), out_json_path if write_json else None, out_qa_paths)
+        display_video_path = out_video_path if generate_video else os.path.join(run_output_dir, f"{base_name}_original{os.path.splitext(video_path)[1] or '.mp4'}")
+        self.print_cli_summary(filename, duration, tracked_objects, display_video_path, str(out_csv_path), out_json_path if write_json else None, out_qa_paths)
 
     def _count_tracked_objects(self, tracked_objects: dict) -> dict:
         counts = {}

@@ -1,4 +1,16 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const videoPlayer = document.getElementById('result-video');
+    let currentQAPairs = [];
+
+    // Listen for video metadata to render timeline markers as soon as duration is available
+    if (videoPlayer) {
+        videoPlayer.addEventListener('loadedmetadata', () => {
+            if (currentQAPairs && currentQAPairs.length > 0) {
+                updateTimelineMarkers(currentQAPairs, videoPlayer);
+            }
+        });
+    }
+
     // Sliders setup
     const setupSlider = (sliderId, displayId) => {
         const slider = document.getElementById(sliderId);
@@ -186,6 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const normalizedResults = {
             folder: `/output/${run.folder}`,
             video: results.video,
+            is_original_video: results.is_original_video || false,
             csv: results.csv,
             json: results.json,
             qa_json_files: results.qa_json_files || [],
@@ -367,11 +380,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        const videoPlayer = document.getElementById('result-video');
+        // Use the global videoPlayer element defined at the DOMContentLoaded scope
         const downloadCsv = document.getElementById('download-csv');
         const downloadJson = document.getElementById('download-json');
         const downloadVideo = document.getElementById('download-video');
         const analysisSection = document.getElementById('analysis-downloads').closest('.output-section');
+        const videoTypeBadge = document.getElementById('video-type-badge');
 
         let hasAnalysisFiles = false;
         if (results.video) {
@@ -389,6 +403,13 @@ document.addEventListener('DOMContentLoaded', () => {
             downloadVideo.href = downloadUrl(results.video);
             downloadVideo.removeAttribute('download');
             downloadVideo.style.display = 'flex';
+
+            // Show/hide original video badge
+            if (results.is_original_video) {
+                videoTypeBadge.classList.remove('hidden');
+            } else {
+                videoTypeBadge.classList.add('hidden');
+            }
 
             // Handle video decode errors (e.g., mp4v codec not supported by browser)
             videoPlayer.onerror = () => {
@@ -412,6 +433,15 @@ document.addEventListener('DOMContentLoaded', () => {
             videoPlayer.style.display = 'none';
             videoPlayer.closest('.video-container').style.display = 'none';
             downloadVideo.style.display = 'none';
+            videoTypeBadge.classList.add('hidden');
+        }
+
+        // Load the analysis timeline chart
+        const timelineSection = document.getElementById('analysis-timeline-section');
+        if (results.folder) {
+            loadAnalysisTimeline(results.folder, videoPlayer);
+        } else {
+            timelineSection.classList.add('hidden');
         }
         
         if (results.csv) {
@@ -462,6 +492,485 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             qaSection.classList.add('hidden');
         }
+
+        // Load and display QA timeline if QA files exist
+        if (qaFiles.length > 0 && results.folder) {
+            loadQATimeline(results.folder, videoPlayer);
+        }
+    }
+
+    // ─── Analysis Timeline Chart ───
+
+    let timelineData = null;        // Cached timeline array from the API
+    let timelineDuration = 0;       // Video duration in seconds from the timeline API
+    let timelineAnimFrame = null;   // requestAnimationFrame ID for playhead updates
+
+    async function loadAnalysisTimeline(folder, videoPlayer) {
+        /**
+         * Fetch detection-count timeline data and render an interactive chart.
+         */
+        const section = document.getElementById('analysis-timeline-section');
+        const canvas = document.getElementById('analysis-timeline-canvas');
+        const playhead = document.getElementById('timeline-playhead');
+        const timeLabels = document.getElementById('timeline-time-labels');
+
+        // Extract folder name from URL path
+        const folderName = folder.replace(/^\/output\//, '').split('/').pop();
+
+        try {
+            const response = await fetch(`/api/analysis-timeline?folder=${encodeURIComponent(folderName)}`);
+            if (!response.ok) {
+                section.classList.add('hidden');
+                return;
+            }
+            const data = await response.json();
+
+            if (!data.timeline || data.timeline.length === 0) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            timelineData = data.timeline;
+            timelineDuration = data.duration_seconds || timelineData[timelineData.length - 1].second || 1;
+
+            // Show the section
+            section.classList.remove('hidden');
+
+            // Render the chart
+            renderTimelineChart(canvas, timelineData, timelineDuration);
+
+            // Generate time labels
+            renderTimeLabels(timeLabels, timelineDuration);
+
+            // Click-to-seek on the chart
+            const canvasWrap = canvas.closest('.analysis-timeline-canvas-wrap');
+            canvasWrap.addEventListener('click', (e) => {
+                const rect = canvasWrap.getBoundingClientRect();
+                const xRatio = (e.clientX - rect.left) / rect.width;
+                const seekTime = xRatio * timelineDuration;
+                videoPlayer.currentTime = Math.max(0, Math.min(seekTime, timelineDuration));
+                videoPlayer.play();
+            });
+
+            // Hover tooltip
+            let tooltip = canvasWrap.querySelector('.timeline-tooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.className = 'timeline-tooltip';
+                tooltip.style.display = 'none';
+                canvasWrap.appendChild(tooltip);
+            }
+
+            canvasWrap.addEventListener('mousemove', (e) => {
+                const rect = canvasWrap.getBoundingClientRect();
+                const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                const hoverSecond = Math.round(xRatio * timelineDuration);
+                const entry = timelineData.find(d => d.second === hoverSecond) || timelineData[Math.min(hoverSecond, timelineData.length - 1)];
+
+                if (entry) {
+                    tooltip.style.display = 'block';
+                    const tooltipX = e.clientX - rect.left;
+                    tooltip.style.left = `${Math.max(50, Math.min(tooltipX, rect.width - 50))}px`;
+                    tooltip.style.top = '4px';
+                    tooltip.innerHTML = `
+                        <div class="tt-time">${secondsToTimeString(entry.second || hoverSecond)}</div>
+                        <div class="tt-row"><span class="tt-dot" style="background:#60a5fa"></span> People: ${entry.people ?? 0}</div>
+                        <div class="tt-row"><span class="tt-dot" style="background:#f97316"></span> Cars: ${entry.cars ?? 0}</div>
+                        <div class="tt-row"><span class="tt-dot" style="background:#a78bfa"></span> Dogs: ${entry.dogs ?? 0}</div>
+                    `;
+                }
+            });
+
+            canvasWrap.addEventListener('mouseleave', () => {
+                tooltip.style.display = 'none';
+            });
+
+            // Playhead: update on video timeupdate
+            if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame);
+
+            function updatePlayhead() {
+                if (!videoPlayer.paused && videoPlayer.duration && isFinite(videoPlayer.duration)) {
+                    const xPercent = (videoPlayer.currentTime / timelineDuration) * 100;
+                    playhead.style.left = `${Math.min(100, xPercent)}%`;
+                    playhead.style.display = 'block';
+                }
+                timelineAnimFrame = requestAnimationFrame(updatePlayhead);
+            }
+
+            videoPlayer.addEventListener('play', () => {
+                playhead.style.display = 'block';
+                updatePlayhead();
+            });
+
+            videoPlayer.addEventListener('pause', () => {
+                if (timelineAnimFrame) cancelAnimationFrame(timelineAnimFrame);
+                // Keep playhead visible at current position
+                if (videoPlayer.duration && isFinite(videoPlayer.duration)) {
+                    const xPercent = (videoPlayer.currentTime / timelineDuration) * 100;
+                    playhead.style.left = `${Math.min(100, xPercent)}%`;
+                }
+            });
+
+            videoPlayer.addEventListener('seeked', () => {
+                if (videoPlayer.duration && isFinite(videoPlayer.duration)) {
+                    const xPercent = (videoPlayer.currentTime / timelineDuration) * 100;
+                    playhead.style.left = `${Math.min(100, xPercent)}%`;
+                    playhead.style.display = 'block';
+                }
+            });
+
+        } catch (error) {
+            console.error('Error loading analysis timeline:', error);
+            section.classList.add('hidden');
+        }
+    }
+
+    function renderTimelineChart(canvas, data, duration) {
+        /**
+         * Render a filled line chart on canvas showing people, cars, dogs over time.
+         */
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+
+        const w = rect.width;
+        const h = rect.height;
+        const padTop = 8;
+        const padBottom = 4;
+        const chartH = h - padTop - padBottom;
+
+        // Clear
+        ctx.clearRect(0, 0, w, h);
+
+        // Find max value for Y-axis scaling
+        let maxVal = 1;
+        data.forEach(d => {
+            maxVal = Math.max(maxVal, d.people || 0, d.cars || 0, d.dogs || 0);
+        });
+        maxVal = Math.ceil(maxVal * 1.15); // Add 15% headroom
+
+        // Draw subtle grid lines
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= 4; i++) {
+            const y = padTop + (chartH * (1 - i / 4));
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+        }
+
+        // Helper: draw a filled area line
+        function drawSeries(key, color, fillAlpha) {
+            if (data.length === 0) return;
+
+            ctx.beginPath();
+            ctx.moveTo(0, padTop + chartH); // Start at bottom-left
+
+            data.forEach((d, i) => {
+                const x = (d.second / duration) * w;
+                const val = d[key] || 0;
+                const y = padTop + chartH - (val / maxVal) * chartH;
+                if (i === 0) {
+                    ctx.lineTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+
+            // Close the path along the bottom
+            const lastX = (data[data.length - 1].second / duration) * w;
+            ctx.lineTo(lastX, padTop + chartH);
+            ctx.closePath();
+
+            // Fill
+            ctx.fillStyle = color.replace(')', `, ${fillAlpha})`).replace('rgb', 'rgba');
+            ctx.fill();
+
+            // Stroke
+            ctx.beginPath();
+            data.forEach((d, i) => {
+                const x = (d.second / duration) * w;
+                const val = d[key] || 0;
+                const y = padTop + chartH - (val / maxVal) * chartH;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        // Draw series (back to front for layering)
+        drawSeries('dogs', 'rgb(167, 139, 250)', 0.15);   // Purple
+        drawSeries('cars', 'rgb(249, 115, 22)', 0.18);     // Orange
+        drawSeries('people', 'rgb(96, 165, 250)', 0.22);   // Blue
+    }
+
+    function renderTimeLabels(container, duration) {
+        /**
+         * Generate time labels (e.g. 0:00, 0:30, 1:00...) below the chart.
+         */
+        container.innerHTML = '';
+        const numLabels = Math.min(8, Math.max(3, Math.floor(duration / 15)));
+        for (let i = 0; i <= numLabels; i++) {
+            const sec = Math.round((i / numLabels) * duration);
+            const label = document.createElement('span');
+            label.textContent = secondsToTimeString(sec);
+            container.appendChild(label);
+        }
+    }
+
+    // ─── QA Timeline Functions ───
+    function timeStringToSeconds(timeStr) {
+        /**
+         * Convert time string like "0:00:00" or "0:00" to seconds.
+         */
+        const parts = timeStr.trim().split(':').map(p => parseInt(p, 10));
+        if (parts.length === 3) {
+            return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        } else if (parts.length === 2) {
+            return parts[0] * 60 + parts[1];
+        }
+        return 0;
+    }
+
+    function parseTimeRange(evidenceStr) {
+        /**
+         * Parse "0:00:00 - 0:00:10" format and return {start, end} in seconds.
+         */
+        const match = evidenceStr.match(/(.+?)\s*-\s*(.+)/);
+        if (!match) return null;
+        const start = timeStringToSeconds(match[1]);
+        const end = timeStringToSeconds(match[2]);
+        return { start, end, midpoint: (start + end) / 2 };
+    }
+
+    function secondsToTimeString(seconds) {
+        /**
+         * Convert seconds to "M:SS" or "H:MM:SS" format.
+         */
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        if (h > 0) {
+            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+        return `${m}:${String(s).padStart(2, '0')}`;
+    }
+
+    async function loadQATimeline(folder, videoPlayer) {
+        /**
+         * Fetch QA data from the API and set up the timeline.
+         */
+        const folderName = folder.split('/').pop();
+        try {
+            const response = await fetch(`/api/qa-data?folder=${encodeURIComponent(folderName)}`);
+            if (!response.ok) {
+                console.error('Failed to load QA data');
+                return;
+            }
+            const qaData = await response.json();
+            
+            if (!qaData || Object.keys(qaData).length === 0) {
+                return; // No QA data
+            }
+
+            // Set up the QA review section
+            const qaReviewSection = document.getElementById('qa-review-section');
+            const qaCategoryTabs = document.getElementById('qa-category-tabs');
+            const qaCardsList = document.getElementById('qa-cards-list');
+
+            // Clear previous content
+            qaCategoryTabs.innerHTML = '';
+            qaCardsList.innerHTML = '';
+
+            // Track current QA data using the outer-scope variable
+            let currentCategory = null;
+            currentQAPairs = [];
+
+            // Create category tabs
+            const categories = Object.keys(qaData).sort();
+            categories.forEach((category, idx) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'qa-tab';
+                if (idx === 0) btn.classList.add('active');
+                btn.dataset.category = category;
+                btn.textContent = category.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                
+                btn.addEventListener('click', () => {
+                    // Update active tab
+                    qaCategoryTabs.querySelectorAll('.qa-tab').forEach(t => t.classList.remove('active'));
+                    btn.classList.add('active');
+                    
+                    // Render QA pairs for this category
+                    currentCategory = category;
+                    currentQAPairs = qaData[category] || [];
+                    renderQACards(currentQAPairs, videoPlayer);
+                    updateTimelineMarkers(currentQAPairs, videoPlayer);
+                });
+                
+                qaCategoryTabs.appendChild(btn);
+            });
+
+            // Load the first category by default
+            if (categories.length > 0) {
+                currentCategory = categories[0];
+                currentQAPairs = qaData[currentCategory] || [];
+                renderQACards(currentQAPairs, videoPlayer);
+                updateTimelineMarkers(currentQAPairs, videoPlayer);
+            }
+
+            // Show the QA review section
+            qaReviewSection.classList.remove('hidden');
+
+            // Sync video time with QA cards
+            videoPlayer.addEventListener('timeupdate', () => {
+                syncQACardsWithVideo(currentQAPairs, videoPlayer);
+            });
+
+        } catch (error) {
+            console.error('Error loading QA timeline:', error);
+        }
+    }
+
+    function renderQACards(qaPairs, videoPlayer) {
+        /**
+         * Render QA pairs as interactive cards in the QA cards list.
+         */
+        const qaCardsList = document.getElementById('qa-cards-list');
+        qaCardsList.innerHTML = '';
+
+        if (!qaPairs || qaPairs.length === 0) {
+            qaCardsList.innerHTML = '<p style="padding: 1rem; color: var(--text-secondary);">No QA pairs available</p>';
+            return;
+        }
+
+        qaPairs.forEach((qa, idx) => {
+            const timeRange = parseTimeRange(qa['Evidence spans the video']);
+            if (!timeRange) return;
+
+            const card = document.createElement('div');
+            card.className = 'qa-card';
+            card.dataset.startTime = timeRange.start;
+            card.dataset.endTime = timeRange.end;
+
+            const question = qa['Question'] || '';
+            const answer = qa['Answer'] || '';
+            const reasoning = qa['Reasoning type'] || '';
+            const difficulty = qa['Difficulty level'] || '';
+
+            card.innerHTML = `
+                <div class="qa-card-header">
+                    <span class="qa-card-number">Q${idx + 1}</span>
+                    <span class="qa-card-timestamp" title="Evidence timespan">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                        ${secondsToTimeString(timeRange.start)} - ${secondsToTimeString(timeRange.end)}
+                    </span>
+                    <button class="qa-jump-btn" type="button" title="Jump to this moment in the video">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1 .12-13.46L23 10"></path>
+                        </svg>
+                        Seek
+                    </button>
+                </div>
+                <div class="qa-field">
+                    <div class="qa-field-label">Question</div>
+                    <div class="qa-question-text">${question}</div>
+                </div>
+                <div class="qa-field">
+                    <div class="qa-field-label">Answer</div>
+                    <div class="qa-answer-input" readonly style="border: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.4); padding: 0.55rem 0.8rem; border-radius: 8px;">${answer}</div>
+                </div>
+                <div class="qa-field">
+                    <div class="qa-field-label">Reasoning</div>
+                    <div style="font-size: 0.88rem; color: #a78bfa;">${reasoning}</div>
+                </div>
+                <div class="qa-field">
+                    <div class="qa-field-label">Difficulty</div>
+                    <div style="font-size: 0.88rem; color: #a78bfa;">${difficulty}</div>
+                </div>
+            `;
+
+            card.querySelector('.qa-jump-btn').addEventListener('click', () => {
+                videoPlayer.currentTime = timeRange.start;
+                videoPlayer.play();
+            });
+
+            qaCardsList.appendChild(card);
+        });
+
+        syncQACardsWithVideo(qaPairs, videoPlayer);
+    }
+
+    function updateTimelineMarkers(qaPairs, videoPlayer) {
+        /**
+         * Create markers on the timeline bar for each QA pair.
+         */
+        const timelineTrack = document.getElementById('qa-timeline-track');
+        timelineTrack.innerHTML = '';
+
+        if (!videoPlayer.duration || !isFinite(videoPlayer.duration)) return;
+
+        qaPairs.forEach((qa) => {
+            const timeRange = parseTimeRange(qa['Evidence spans the video']);
+            if (!timeRange) return;
+
+            const percent = (timeRange.midpoint / videoPlayer.duration) * 100;
+            const marker = document.createElement('div');
+            marker.className = 'qa-timeline-marker';
+            marker.style.left = `${percent}%`;
+            marker.dataset.category = qa['Reasoning type'] || 'other';
+            marker.title = `${qa['Question']?.substring(0, 50)}...`;
+
+            marker.addEventListener('click', () => {
+                videoPlayer.currentTime = timeRange.start;
+                videoPlayer.play();
+            });
+
+            timelineTrack.appendChild(marker);
+        });
+    }
+
+    function syncQACardsWithVideo(qaPairs, videoPlayer) {
+        /**
+         * Highlight the QA card that corresponds to the current video time.
+         */
+        const currentTime = videoPlayer.currentTime;
+        const qaCardsList = document.getElementById('qa-cards-list');
+        const cards = qaCardsList.querySelectorAll('.qa-card');
+
+        cards.forEach((card) => {
+            const startTime = parseFloat(card.dataset.startTime);
+            const endTime = parseFloat(card.dataset.endTime);
+            
+            if (currentTime >= startTime && currentTime <= endTime) {
+                if (!card.classList.contains('active')) {
+                    card.classList.add('active');
+                    // Scroll to the active card
+                    const scrollContainer = qaCardsList;
+                    const cardRect = card.getBoundingClientRect();
+                    const containerRect = scrollContainer.getBoundingClientRect();
+                    
+                    if (cardRect.bottom > containerRect.bottom) {
+                        card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    } else if (cardRect.top < containerRect.top) {
+                        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                }
+            } else {
+                card.classList.remove('active');
+            }
+        });
     }
 
     function showError(msg) {
@@ -493,6 +1002,29 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('qa-downloads-container').innerHTML = '';
         document.getElementById('qa-output-section').classList.add('hidden');
         document.getElementById('analysis-downloads').closest('.output-section').classList.add('hidden');
+
+        // Reset analysis timeline
+        document.getElementById('analysis-timeline-section').classList.add('hidden');
+        const tlCanvas = document.getElementById('analysis-timeline-canvas');
+        if (tlCanvas) {
+            const ctx = tlCanvas.getContext('2d');
+            ctx.clearRect(0, 0, tlCanvas.width, tlCanvas.height);
+        }
+        document.getElementById('timeline-playhead').style.display = 'none';
+        document.getElementById('timeline-time-labels').innerHTML = '';
+        document.getElementById('video-type-badge').classList.add('hidden');
+        timelineData = null;
+        timelineDuration = 0;
+        if (timelineAnimFrame) {
+            cancelAnimationFrame(timelineAnimFrame);
+            timelineAnimFrame = null;
+        }
+
+        // Reset QA review section
+        document.getElementById('qa-category-tabs').innerHTML = '';
+        document.getElementById('qa-timeline-track').innerHTML = '';
+        document.getElementById('qa-cards-list').innerHTML = '';
+        document.getElementById('qa-review-section').classList.add('hidden');
 
         const metaDisplay = document.getElementById('meta-info-display');
         if (metaDisplay) {

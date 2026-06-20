@@ -144,8 +144,8 @@
                                                 <span class="info-tip" data-tooltip="Video codec for the output file. mp4v is widely compatible. avc1 (H.264) produces smaller files with better browser playback support."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
                                             </div>
                                             <select id="codec" name="codec">
-                                                <option value="mp4v">mp4v (Standard)</option>
-                                                <option value="avc1">avc1 (H.264 / Better Web Support)</option>
+                                                <option value="avc1">avc1 (H.264 / Browser Compatible)</option>
+                                                <option value="mp4v">mp4v (Legacy)</option>
                                             </select>
                                         </div>
 
@@ -288,6 +288,31 @@
                                     <video id="result-video" controls>
                                         Your browser does not support the video tag.
                                     </video>
+                                    <div class="video-type-badge hidden" id="video-type-badge">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <circle cx="12" cy="12" r="10"></circle>
+                                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                                        </svg>
+                                        <span>Original Video (no annotations)</span>
+                                    </div>
+                                </div>
+
+                                <!-- Analysis Timeline Chart -->
+                                <div class="analysis-timeline-section hidden" id="analysis-timeline-section">
+                                    <div class="analysis-timeline-header">
+                                        <p class="output-section-label">Detection Timeline</p>
+                                        <div class="timeline-legend" id="timeline-legend">
+                                            <span class="legend-item"><span class="legend-color" style="background: #60a5fa;"></span> People</span>
+                                            <span class="legend-item"><span class="legend-color" style="background: #f97316;"></span> Cars</span>
+                                            <span class="legend-item"><span class="legend-color" style="background: #a78bfa;"></span> Dogs</span>
+                                        </div>
+                                    </div>
+                                    <div class="analysis-timeline-canvas-wrap">
+                                        <canvas id="analysis-timeline-canvas"></canvas>
+                                        <div class="timeline-playhead" id="timeline-playhead"></div>
+                                    </div>
+                                    <div class="timeline-time-labels" id="timeline-time-labels"></div>
                                 </div>
 
                                 <div class="output-section hidden">
@@ -312,6 +337,36 @@
                                     <p class="output-section-label">QA Pair Downloads</p>
                                     <div class="download-links" id="qa-downloads-container"></div>
                                 </div>
+
+                                <!-- QA Review Section -->
+                                <div class="qa-review-section hidden" id="qa-review-section">
+                                    <div class="qa-review-header">
+                                        <p class="output-section-label qa-review-label">QA Review</p>
+                                        <div class="qa-category-tabs" id="qa-category-tabs"></div>
+                                    </div>
+
+                                    <!-- Timeline marker bar -->
+                                    <div class="qa-timeline-bar" id="qa-timeline-bar">
+                                        <div class="qa-timeline-track" id="qa-timeline-track"></div>
+                                    </div>
+
+                                    <!-- QA cards list -->
+                                    <div class="qa-cards-list" id="qa-cards-list"></div>
+
+                                    <!-- Save button -->
+                                    <div class="qa-save-bar" id="qa-save-bar">
+                                        <span class="qa-unsaved-hint hidden" id="qa-unsaved-hint">Unsaved changes</span>
+                                        <button type="button" class="qa-save-btn" id="qa-save-btn" disabled>
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                                <polyline points="7 3 7 8 15 8"></polyline>
+                                            </svg>
+                                            Save Changes
+                                        </button>
+                                    </div>
+                                </div>
+
                             </div>  
                         <button id="reset-btn" class="text-btn">Analyze another video</button>
                     </div>

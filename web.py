@@ -12,6 +12,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, Streamin
 if os.name == 'nt':
     core_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'core'))
     os.environ['PATH'] = core_dir + os.pathsep + os.environ.get('PATH', '')
+    if hasattr(os, 'add_dll_directory'):
+        try:
+            os.add_dll_directory(core_dir)
+        except Exception:
+            pass
 
 import torch
 from core.video_processor import VideoProcessor
@@ -55,6 +60,8 @@ def run_analysis(
     generate_qa: bool,
     qa_categories: str,
     mask_persons: bool = False,
+    generate_json: bool = True,
+    generate_video: bool = True,
 ):
     try:
         tasks[task_id]["status"] = "loading_model"
@@ -112,6 +119,8 @@ def run_analysis(
             qa_categories=qa_cats,
             progress_callback=update_progress,
             mask_persons=mask_persons,
+            write_json=generate_json,
+            generate_video=generate_video,
         )
         
         current_folders = set(os.listdir(output_dir))
@@ -123,7 +132,12 @@ def run_analysis(
             
             # Find the output files
             files = os.listdir(run_path)
-            video_file = next((f for f in files if f.endswith('.mp4')), None)
+            video_exts = ('.mp4', '.avi', '.mkv', '.webm', '.mov')
+            analyzed_video = next((f for f in files if f.endswith(video_exts) and '_analyzed' in f), None)
+            original_video = next((f for f in files if f.endswith(video_exts) and '_original' in f), None)
+            # Fallback: any video file
+            any_video = next((f for f in files if f.endswith(video_exts)), None) if not analyzed_video and not original_video else None
+            video_file = analyzed_video or original_video or any_video
             csv_file = next((f for f in files if f.endswith('.csv') and f != 'total_report.csv'), None)
             json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
             qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
@@ -131,6 +145,7 @@ def run_analysis(
             tasks[task_id]["results"] = {
                 "folder": f"/output/{run_folder}",
                 "video": f"/output/{run_folder}/{video_file}" if video_file else None,
+                "is_original_video": analyzed_video is None and video_file is not None,
                 "csv": f"/output/{run_folder}/{csv_file}" if csv_file else None,
                 "json": f"/output/{run_folder}/{json_file}" if json_file else None,
                 "qa_json_files": [f"/output/{run_folder}/{f}" for f in qa_json_files],
@@ -178,15 +193,17 @@ async def analyze_video(
     model_type: str = Form("detr"),
     model_id: str = Form(""),
     device: str = Form("auto"),
-    codec: str = Form("mp4v"),
+    codec: str = Form("avc1"),
     confidence: float = Form(0.7),
     fps_sample: float = Form(1.0),
     resize_factor: float = Form(1.0),
     save_sampled_only: bool = Form(False),
     generate_qa: bool = Form(True),
+    generate_json: bool = Form(True),
     qa_categories: str = Form(""),
     remove_audio: bool = Form(False),
     mask_persons: bool = Form(False),
+    generate_video: bool = Form(True),
 ):
     task_id = str(uuid.uuid4())
     
@@ -228,6 +245,8 @@ async def analyze_video(
         generate_qa,
         qa_categories,
         mask_persons,
+        generate_json,
+        generate_video,
     )
     
     return {"task_id": task_id, "status": "pending"}
@@ -296,14 +315,19 @@ async def get_results(video: str):
     run_path = os.path.join(output_dir, latest_folder)
     
     files = os.listdir(run_path)
-    video_file = next((f for f in files if f.endswith('.mp4')), None)
+    video_exts = ('.mp4', '.avi', '.mkv', '.webm', '.mov')
+    analyzed_video = next((f for f in files if f.endswith(video_exts) and '_analyzed' in f), None)
+    original_video = next((f for f in files if f.endswith(video_exts) and '_original' in f), None)
+    any_video = next((f for f in files if f.endswith(video_exts)), None) if not analyzed_video and not original_video else None
+    video_file = analyzed_video or original_video or any_video
     csv_file = next((f for f in files if f.endswith('.csv')), None)
-    json_file = next((f for f in files if f.endswith('_analysis.json')), None)
+    json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
     qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
     
     results = {
         "folder": f"/output/{latest_folder}",
         "video": f"/output/{latest_folder}/{video_file}" if video_file else None,
+        "is_original_video": analyzed_video is None and video_file is not None,
         "csv": f"/output/{latest_folder}/{csv_file}" if csv_file else None,
         "json": f"/output/{latest_folder}/{json_file}" if json_file else None,
         "qa_json_files": [f"/output/{latest_folder}/{f}" for f in qa_json_files],
@@ -350,7 +374,11 @@ def _parse_run_folder(folder_name: str) -> dict | None:
         return None
 
     files = os.listdir(run_path)
-    video_file = next((f for f in files if f.endswith('.mp4')), None)
+    video_exts = ('.mp4', '.avi', '.mkv', '.webm', '.mov')
+    analyzed_video = next((f for f in files if f.endswith(video_exts) and '_analyzed' in f), None)
+    original_video = next((f for f in files if f.endswith(video_exts) and '_original' in f), None)
+    any_video = next((f for f in files if f.endswith(video_exts)), None) if not analyzed_video and not original_video else None
+    video_file = analyzed_video or original_video or any_video
     csv_file = next((f for f in files if f.endswith('.csv') and f != 'total_report.csv'), None)
     json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
     qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
@@ -401,6 +429,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
         "analysis_settings": analysis_settings,
         "files": {
             "video": f"/output/{folder_name}/{video_file}" if video_file else None,
+            "is_original_video": analyzed_video is None and video_file is not None,
             "csv": f"/output/{folder_name}/{csv_file}" if csv_file else None,
             "json": f"/output/{folder_name}/{json_file}" if json_file else None,
             "qa_json_files": [f"/output/{folder_name}/{f}" for f in qa_json_files],
@@ -439,6 +468,119 @@ async def get_history_detail(folder_name: str):
         return JSONResponse(status_code=404, content={"error": "Run not found"})
     return entry
 
+@app.get("/api/analysis-timeline")
+async def get_analysis_timeline(folder: str):
+    """Return the per-second detection timeline from the analysis JSON.
+
+    Returns the timeline array plus basic video metadata for charting.
+    """
+    if not folder.startswith("results_"):
+        return JSONResponse(status_code=400, content={"error": "Invalid folder name"})
+
+    run_path = os.path.normpath(os.path.join(output_dir, folder))
+    if not run_path.startswith(os.path.normpath(output_dir)):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if not os.path.isdir(run_path):
+        return JSONResponse(status_code=404, content={"error": "Folder not found"})
+
+    # Find the analysis JSON file (not QA JSONs)
+    json_file = None
+    for fname in os.listdir(run_path):
+        if fname.endswith(".json") and "_qa_" not in fname:
+            json_file = os.path.join(run_path, fname)
+            break
+
+    if not json_file:
+        return JSONResponse(status_code=404, content={"error": "No analysis JSON found"})
+
+    try:
+        with open(json_file, "r", encoding="utf-8") as f:
+            report_data = py_json.load(f)
+
+        timeline = report_data.get("timeline", [])
+        metadata = report_data.get("metadata", {})
+
+        return {
+            "timeline": timeline,
+            "duration_seconds": metadata.get("duration_seconds"),
+            "fps": metadata.get("fps"),
+            "total_frames": metadata.get("total_frames"),
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/qa-data")
+async def get_qa_data(folder: str):
+    """Load all QA JSON files for a given results folder.
+
+    Returns a dict keyed by category name, e.g.
+    {"counting": [...], "negative": [...], "ambiguity": [...], "day_night": [...]}
+    """
+    if not folder.startswith("results_"):
+        return JSONResponse(status_code=400, content={"error": "Invalid folder name"})
+
+    run_path = os.path.normpath(os.path.join(output_dir, folder))
+    if not run_path.startswith(os.path.normpath(output_dir)):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if not os.path.isdir(run_path):
+        return JSONResponse(status_code=404, content={"error": "Folder not found"})
+
+    qa_data = {}
+    for fname in sorted(os.listdir(run_path)):
+        if fname.endswith(".json") and "_qa_" in fname:
+            match = fname.rsplit("_qa_", 1)
+            if len(match) == 2:
+                category = match[1].replace(".json", "")
+                try:
+                    with open(os.path.join(run_path, fname), "r", encoding="utf-8") as f:
+                        qa_data[category] = py_json.load(f)
+                except Exception as e:
+                    qa_data[category] = {"error": str(e)}
+    return qa_data
+
+
+@app.put("/api/qa-data")
+async def save_qa_data(request: Request, folder: str, category: str):
+    """Save edited QA pairs back to the corresponding JSON file.
+
+    Expects a JSON array body with the full list of QA pairs for the category.
+    """
+    if not folder.startswith("results_"):
+        return JSONResponse(status_code=400, content={"error": "Invalid folder name"})
+    # Sanitise category to prevent path traversal
+    safe_category = category.replace("/", "").replace("\\", "").replace("..", "")
+    if not safe_category:
+        return JSONResponse(status_code=400, content={"error": "Invalid category"})
+
+    run_path = os.path.normpath(os.path.join(output_dir, folder))
+    if not run_path.startswith(os.path.normpath(output_dir)):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if not os.path.isdir(run_path):
+        return JSONResponse(status_code=404, content={"error": "Folder not found"})
+
+    # Find the matching QA file
+    target_file = None
+    for fname in os.listdir(run_path):
+        if fname.endswith(".json") and f"_qa_{safe_category}.json" in fname:
+            target_file = os.path.join(run_path, fname)
+            break
+
+    if not target_file:
+        return JSONResponse(status_code=404, content={"error": f"QA file for category '{safe_category}' not found"})
+
+    try:
+        body = await request.json()
+        if not isinstance(body, list):
+            return JSONResponse(status_code=400, content={"error": "Body must be a JSON array"})
+        with open(target_file, "w", encoding="utf-8") as f:
+            py_json.dump(body, f, indent=2, ensure_ascii=False)
+        return {"status": "saved", "category": safe_category, "count": len(body)}
+    except py_json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 @app.get("/api/stream-video")
 async def stream_video(request: Request, path: str):
@@ -448,30 +590,56 @@ async def stream_video(request: Request, path: str):
     StaticFiles mount does not always handle this reliably for large files
     produced by OpenCV, so this dedicated endpoint ensures correct
     Content-Type and partial-content responses.
+
+    Supports paths under both /output/ and /input/ directories.
     """
     relative = path.lstrip("/")
-    if not relative.startswith("output/"):
+
+    # Resolve the file path — support both output/ and input/ directories
+    if relative.startswith("output/"):
+        file_subpath = relative[len("output/"):]
+        file_path = os.path.normpath(os.path.join(output_dir, file_subpath))
+        if not file_path.startswith(os.path.normpath(output_dir)):
+            return JSONResponse(status_code=403, content={"error": "Access denied"})
+    elif relative.startswith("input/"):
+        file_subpath = relative[len("input/"):]
+        file_path = os.path.normpath(os.path.join(input_dir, file_subpath))
+        if not file_path.startswith(os.path.normpath(input_dir)):
+            return JSONResponse(status_code=403, content={"error": "Access denied"})
+    else:
         return JSONResponse(status_code=400, content={"error": "Invalid path"})
-
-    file_subpath = relative[len("output/"):]
-    file_path = os.path.normpath(os.path.join(output_dir, file_subpath))
-
-    if not file_path.startswith(os.path.normpath(output_dir)):
-        return JSONResponse(status_code=403, content={"error": "Access denied"})
 
     if not os.path.isfile(file_path):
         return JSONResponse(status_code=404, content={"error": "File not found"})
+
+    # Auto-detect MIME type based on extension
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_types = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+        ".mov": "video/quicktime",
+    }
+    media_type = mime_types.get(ext, "video/mp4")
 
     file_size = os.path.getsize(file_path)
     range_header = request.headers.get("range")
 
     if range_header:
-        # Parse "bytes=start-end"
+        # Parse "bytes=start-end" or "bytes=-num" or "bytes=start-"
         range_spec = range_header.replace("bytes=", "").strip()
-        parts = range_spec.split("-")
-        start = int(parts[0]) if parts[0] else 0
-        end = int(parts[1]) if parts[1] else file_size - 1
+        if range_spec.startswith("-"):
+            num_bytes = int(range_spec[1:])
+            start = max(0, file_size - num_bytes)
+            end = file_size - 1
+        else:
+            parts = range_spec.split("-")
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if (len(parts) > 1 and parts[1]) else file_size - 1
+            
         end = min(end, file_size - 1)
+        start = min(start, end)
         length = end - start + 1
 
         def iter_file():
@@ -488,7 +656,7 @@ async def stream_video(request: Request, path: str):
         return StreamingResponse(
             iter_file(),
             status_code=206,
-            media_type="video/mp4",
+            media_type=media_type,
             headers={
                 "Content-Range": f"bytes {start}-{end}/{file_size}",
                 "Accept-Ranges": "bytes",
@@ -503,7 +671,7 @@ async def stream_video(request: Request, path: str):
 
         return StreamingResponse(
             iter_full(),
-            media_type="video/mp4",
+            media_type=media_type,
             headers={
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(file_size),
