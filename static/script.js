@@ -96,6 +96,125 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Hugging Face setup
+    const tabUpload = document.getElementById('tab-upload');
+    const tabHuggingface = document.getElementById('tab-huggingface');
+    const hfZone = document.getElementById('hf-zone');
+    const hfRepoInput = document.getElementById('hf_repo_id');
+    const hfTokenInput = document.getElementById('hf_token');
+    const hfFetchBtn = document.getElementById('hf-fetch-btn');
+    const hfFilesContainer = document.getElementById('hf-files-container');
+    const hfFileInput = document.getElementById('hf_file_path');
+    const hfErrorDisplay = document.getElementById('hf-error-display');
+    
+    let currentInputTab = 'upload';
+
+    tabUpload.addEventListener('click', () => {
+        currentInputTab = 'upload';
+        tabUpload.classList.add('active');
+        tabHuggingface.classList.remove('active');
+        dropZone.classList.remove('hidden');
+        hfZone.classList.add('hidden');
+        // Clear file input
+        fileInput.value = '';
+        fileNameDisplay.textContent = '';
+    });
+
+    tabHuggingface.addEventListener('click', () => {
+        currentInputTab = 'huggingface';
+        tabHuggingface.classList.add('active');
+        tabUpload.classList.remove('active');
+        hfZone.classList.remove('hidden');
+        dropZone.classList.add('hidden');
+        // Clear file input
+        fileInput.value = '';
+        fileNameDisplay.textContent = '';
+    });
+
+    // Fetch video list from Hugging Face
+    hfFetchBtn.addEventListener('click', async () => {
+        const repoId = hfRepoInput.value.trim();
+        const token = hfTokenInput.value.trim();
+        
+        if (!repoId) {
+            showHfError('Please enter a Hugging Face Dataset link or Repository ID.');
+            return;
+        }
+
+        hfFetchBtn.disabled = true;
+        hfFetchBtn.textContent = 'Fetching...';
+        clearHfError();
+        hfFilesContainer.classList.add('hidden');
+
+        try {
+            const url = `/api/hf/list-videos?repo_id=${encodeURIComponent(repoId)}` + (token ? `&token=${encodeURIComponent(token)}` : '');
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || 'Failed to retrieve video files.');
+            }
+
+            const data = await response.json();
+            
+            if (!data.videos || data.videos.length === 0) {
+                throw new Error('No video files (.mp4, .avi, .mov, .mkv, .webm) found in this repository.');
+            }
+
+            // Fill select dropdown options
+            hfFileInput.innerHTML = '';
+            data.videos.forEach(video => {
+                const opt = document.createElement('option');
+                opt.value = video;
+                opt.textContent = video;
+                hfFileInput.appendChild(opt);
+            });
+
+            // Set repo input value to clean ID if changed
+            if (data.repo_id) {
+                hfRepoInput.value = data.repo_id;
+            }
+
+            // Auto-select file if parsed from URL
+            if (data.auto_selected_file) {
+                const found = data.videos.find(v => v.toLowerCase() === data.auto_selected_file.toLowerCase() || v.toLowerCase().endsWith(data.auto_selected_file.toLowerCase()));
+                if (found) {
+                    hfFileInput.value = found;
+                }
+            }
+
+            hfFilesContainer.classList.remove('hidden');
+        } catch (err) {
+            showHfError(err.message);
+        } finally {
+            hfFetchBtn.disabled = false;
+            hfFetchBtn.textContent = 'Fetch Videos';
+        }
+    });
+
+    // Automatically trigger Fetch Videos when user paste/types a full URL containing huggingface.co
+    hfRepoInput.addEventListener('input', () => {
+        const value = hfRepoInput.value.trim();
+        if (value.includes('huggingface.co/')) {
+            // Wait slightly for paste to complete, then fetch
+            setTimeout(() => {
+                if (hfRepoInput.value.trim() === value) {
+                    hfFetchBtn.click();
+                }
+            }, 300);
+        }
+    });
+
+    function showHfError(msg) {
+        hfErrorDisplay.textContent = msg;
+        hfErrorDisplay.classList.remove('hidden');
+    }
+
+    function clearHfError() {
+        hfErrorDisplay.textContent = '';
+        hfErrorDisplay.classList.add('hidden');
+    }
+
     // ─── Sidebar ───
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebar-toggle');
@@ -219,12 +338,37 @@ document.addEventListener('DOMContentLoaded', () => {
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         
-        if (!fileInput.files.length) {
-            alert('Please select a video file first.');
-            return;
-        }
-
         const formData = new FormData(form);
+        
+        if (currentInputTab === 'upload') {
+            if (!fileInput.files.length) {
+                alert('Please select a video file first.');
+                return;
+            }
+            // Remove Hugging Face fields to keep payload clean
+            formData.delete('hf_repo_id');
+            formData.delete('hf_file_path');
+            formData.delete('hf_token');
+        } else {
+            const repoId = hfRepoInput.value.trim();
+            const filePath = hfFileInput.value;
+            const token = hfTokenInput.value.trim();
+
+            if (!repoId || !filePath || hfFilesContainer.classList.contains('hidden')) {
+                alert('Please enter a Hugging Face dataset and select a video file first.');
+                return;
+            }
+
+            // Remove file field
+            formData.delete('file');
+            formData.set('hf_repo_id', repoId);
+            formData.set('hf_file_path', filePath);
+            if (token) {
+                formData.set('hf_token', token);
+            } else {
+                formData.delete('hf_token');
+            }
+        }
         
         // Convert checkboxes to explicit boolean values
         if (!formData.has('save_sampled_only')) {
@@ -257,7 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
         errorPanel.classList.add('hidden');
 
         try {
-            loadingStatus.textContent = 'Uploading...';
+            loadingStatus.textContent = currentInputTab === 'upload' ? 'Uploading...' : 'Starting Hugging Face Analysis...';
             
             const response = await fetch('/api/analyze', {
                 method: 'POST',
@@ -301,7 +445,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 const loadingSpinner = document.getElementById('loading-spinner');
                 
                 // Update loading text based on status
-                if (data.status === 'loading_model') {
+                if (data.status === 'downloading_dataset') {
+                    loadingStatus.textContent = 'Downloading video from Hugging Face...';
+                    progressContainer.classList.add('hidden');
+                    loadingSpinner.style.display = 'block';
+                } else if (data.status === 'loading_model') {
                     loadingStatus.textContent = 'Loading AI Model...';
                     progressContainer.classList.add('hidden');
                     loadingSpinner.style.display = 'block';
@@ -990,6 +1138,20 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('fps-val').textContent = '1.0';
         document.getElementById('resize-val').textContent = '1.0';
         
+        // Reset Hugging Face elements
+        if (hfFilesContainer) hfFilesContainer.classList.add('hidden');
+        if (hfFileInput) hfFileInput.innerHTML = '';
+        clearHfError();
+        
+        // Reset tab selection to upload
+        if (tabUpload) {
+            currentInputTab = 'upload';
+            tabUpload.classList.add('active');
+            tabHuggingface.classList.remove('active');
+            dropZone.classList.remove('hidden');
+            hfZone.classList.add('hidden');
+        }
+
         // Sync conditional UI states
         syncModelFields();
 

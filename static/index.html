@@ -75,8 +75,13 @@
                     <div class="glass-panel main-panel" id="main-panel">
                         <form id="upload-form">
                             
+                            <div class="input-tabs">
+                                <button type="button" class="input-tab active" id="tab-upload">Upload Video</button>
+                                <button type="button" class="input-tab" id="tab-huggingface">Hugging Face Dataset</button>
+                            </div>
+
                             <div class="file-upload-wrapper" id="drop-zone">
-                                <input type="file" id="video-file" name="file" accept="video/mp4,video/x-m4v,video/*" required>
+                                <input type="file" id="video-file" name="file" accept="video/mp4,video/x-m4v,video/*">
                                 <div class="upload-content">
                                     <div class="upload-icon">
                                         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -89,6 +94,35 @@
                                     <p>or click to browse from your computer</p>
                                     <div id="file-name-display" class="file-name-display"></div>
                                 </div>
+                            </div>
+
+                            <div class="hf-upload-wrapper hidden" id="hf-zone">
+                                <div class="hf-input-container">
+                                    <div class="label-row">
+                                        <label for="hf_repo_id">Hugging Face Dataset Repository Link / ID</label>
+                                        <span class="info-tip" data-tooltip="Enter the repository ID (e.g., merve/coco-video-sample) or the full Hugging Face datasets URL. Direct links to specific files will automatically preselect them."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                                    </div>
+                                    <div class="hf-input-row">
+                                        <input type="text" id="hf_repo_id" name="hf_repo_id" placeholder="e.g. username/dataset-name or dataset URL">
+                                        <button type="button" class="secondary-btn" id="hf-fetch-btn">Fetch Videos</button>
+                                    </div>
+                                    
+                                    <div class="hf-token-row">
+                                        <div class="label-row">
+                                            <label for="hf_token">Hugging Face API Token (Optional)</label>
+                                            <span class="info-tip" data-tooltip="Optional token for authenticating with private or restricted datasets."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                                        </div>
+                                        <input type="password" id="hf_token" name="hf_token" placeholder="hf_..." autocomplete="off">
+                                    </div>
+                                </div>
+
+                                <div class="hf-files-container hidden" id="hf-files-container">
+                                    <label for="hf_file_path">Select Video File</label>
+                                    <select id="hf_file_path" name="hf_file_path">
+                                        <!-- Loaded dynamically -->
+                                    </select>
+                                </div>
+                                <div id="hf-error-display" class="hf-error-display hidden"></div>
                             </div>
 
                             <!-- Collapsible Advanced Settings -->

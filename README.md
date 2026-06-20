@@ -76,9 +76,15 @@ By default, the server starts at `http://localhost:8000`. Open this address in a
 
 ### Web Interface Overview
 
-#### 1. Upload & Settings Panel
-Configure analysis parameters via an intuitive sidebar. Choose detection models (YOLO or DETR), confidence thresholds, sampling frame rates, and enable options such as privacy masking or Q&A generation.
+#### 1. Input & Settings Panel
+Configure analysis parameters via an intuitive sidebar. You can switch between **Upload Video** (to upload local video files) and **Hugging Face Dataset** (to download and process video files directly from Hugging Face dataset repositories). Choose detection models (YOLO or DETR), confidence thresholds, sampling frame rates, and enable options such as privacy masking or Q&A generation.
 ![Upload & Settings panel](docs/images/ui_main_upload.png)
+
+> [!TIP]
+> **Using Hugging Face Datasets:**
+> 1. Paste the URL (e.g. `https://huggingface.co/datasets/username/repo-name`) or ID (e.g. `username/repo-name`) of your Hugging Face dataset.
+> 2. If accessing a **gated or private dataset**, paste your Hugging Face Access Token (Read scope) into the token input field.
+> 3. Click **Fetch Videos**, select the desired video from the dropdown list, and click **Start Analysis**. The background worker will download the file and execute the analysis pipeline automatically.
 
 #### 2. Results & QA Review Panel
 Track analysis progress in real-time. Once completed, review the annotated video stream side-by-side with an interactive class-wise detection timeline. The Q&A tab allows you to inspect generated question-answer pairs per category, make edits in-place, and save updates back to disk.
@@ -148,7 +154,7 @@ The FastAPI backend exposes the following REST endpoints:
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/` | Serves the web UI (`static/index.html`). |
-| `POST` | `/api/analyze` | Uploads a video and starts a background analysis task. |
+| `POST` | `/api/analyze` | Starts a background analysis task for an uploaded video file or a Hugging Face dataset video. |
 | `GET` | `/api/status/{task_id}` | Polls progress, status, and metadata of a running/completed task. |
 | `GET` | `/api/debug/tasks` | Returns raw in-memory status of all server tasks for debugging. |
 | `GET` | `/api/download` | Serves/downloads a file from the server's output directory. |
@@ -159,6 +165,7 @@ The FastAPI backend exposes the following REST endpoints:
 | `GET` | `/api/qa-data` | Retrieves the JSON Q&A dataset of a given run. |
 | `PUT` | `/api/qa-data` | Saves edited Q&A pairs back to their respective JSON files. |
 | `GET` | `/api/stream-video` | Delivers H.264 video streams supporting HTTP range-based requests. |
+| `GET` | `/api/hf/list-videos` | Lists video files available in a Hugging Face dataset repository (supports private repositories with a token). |
 
 ---
 

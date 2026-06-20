@@ -62,8 +62,28 @@ def run_analysis(
     mask_persons: bool = False,
     generate_json: bool = True,
     generate_video: bool = True,
+    hf_repo_id: str = None,
+    hf_file_path: str = None,
+    hf_token: str = None,
 ):
     try:
+        if hf_repo_id and hf_file_path:
+            tasks[task_id]["status"] = "downloading_dataset"
+            tasks[task_id]["progress"] = 0
+            
+            upload_dir = os.path.join(input_dir, task_id)
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            from huggingface_hub import hf_hub_download
+            video_path = hf_hub_download(
+                repo_id=hf_repo_id,
+                filename=hf_file_path,
+                repo_type="dataset",
+                local_dir=upload_dir,
+                token=hf_token if hf_token else None
+            )
+            tasks[task_id]["filename"] = os.path.basename(video_path)
+
         tasks[task_id]["status"] = "loading_model"
         tasks[task_id]["progress"] = 0
         
@@ -172,13 +192,16 @@ def run_analysis(
         tasks[task_id]["status"] = "error"
         tasks[task_id]["error"] = str(e)
     finally:
-        # Clean up temporary uploaded input video file to avoid folder bloating
+        # Clean up temporary uploaded/downloaded input video file to avoid folder bloating
         try:
-            if os.path.exists(video_path):
-                os.remove(video_path)
-            upload_dir = os.path.dirname(video_path)
-            if os.path.exists(upload_dir) and not os.listdir(upload_dir):
-                os.rmdir(upload_dir)
+            if video_path and os.path.exists(video_path):
+                if os.path.isfile(video_path):
+                    os.remove(video_path)
+                upload_dir = os.path.dirname(video_path)
+                # Keep removing empty directories up to input_dir
+                while upload_dir and upload_dir != input_dir and os.path.exists(upload_dir) and not os.listdir(upload_dir):
+                    os.rmdir(upload_dir)
+                    upload_dir = os.path.dirname(upload_dir)
         except Exception as cleanup_err:
             print(f"[-] Error cleaning up temporary file: {cleanup_err}")
 
@@ -187,9 +210,60 @@ async def read_index():
     with open("static/index.html", "r") as f:
         return f.read()
 
+def parse_hf_dataset_url(url: str) -> tuple[str, str | None]:
+    """Parses a Hugging Face dataset URL into (repo_id, file_path).
+    
+    Supports formats:
+    - https://huggingface.co/datasets/username/repo-name/resolve/main/video.mp4 -> (username/repo-name, video.mp4)
+    - https://huggingface.co/datasets/username/repo-name/blob/main/video.mp4 -> (username/repo-name, video.mp4)
+    - https://huggingface.co/datasets/username/repo-name -> (username/repo-name, None)
+    - username/repo-name -> (username/repo-name, None)
+    """
+    url = url.strip()
+    if "huggingface.co/datasets/" in url:
+        path = url.split("huggingface.co/datasets/")[-1]
+    else:
+        path = url
+        
+    for sep in ("/resolve/", "/blob/"):
+        if sep in path:
+            repo_part, file_part = path.split(sep, 1)
+            file_parts = file_part.split("/", 1)
+            file_path = file_parts[1] if len(file_parts) > 1 else file_part
+            return repo_part, file_path
+            
+    return path, None
+
+@app.get("/api/hf/list-videos")
+async def list_hf_videos(repo_id: str, token: str = None):
+    """List all video files available in a Hugging Face dataset repository."""
+    parsed_repo_id, file_path = parse_hf_dataset_url(repo_id)
+    
+    if not parsed_repo_id:
+        return JSONResponse(status_code=400, content={"error": "Invalid Hugging Face Dataset repository link or ID"})
+        
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=token if token else None)
+        files = api.list_repo_files(repo_id=parsed_repo_id, repo_type="dataset")
+        
+        video_extensions = ('.mp4', '.avi', '.mov', '.mkv', '.webm')
+        video_files = [f for f in files if f.lower().endswith(video_extensions)]
+        
+        return {
+            "repo_id": parsed_repo_id,
+            "videos": video_files,
+            "auto_selected_file": file_path
+        }
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
 @app.post("/api/analyze")
 async def analyze_video(
-    file: UploadFile = File(...),
+    file: UploadFile = File(None),
+    hf_repo_id: str = Form(None),
+    hf_file_path: str = Form(None),
+    hf_token: str = Form(None),
     model_type: str = Form("detr"),
     model_id: str = Form(""),
     device: str = Form("auto"),
@@ -207,19 +281,28 @@ async def analyze_video(
 ):
     task_id = str(uuid.uuid4())
     
-    # Save the uploaded file in a unique folder to prevent name collisions
-    # while preserving the original filename for cleaner output results.
-    upload_dir = os.path.join(input_dir, task_id)
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, file.filename)
+    filename = ""
+    file_path = ""
     
-    with open(file_path, "wb") as buffer:
-        buffer.write(await file.read())
+    if file is not None:
+        # Save the uploaded file in a unique folder to prevent name collisions
+        # while preserving the original filename for cleaner output results.
+        upload_dir = os.path.join(input_dir, task_id)
+        os.makedirs(upload_dir, exist_ok=True)
+        file_path = os.path.join(upload_dir, file.filename)
         
+        with open(file_path, "wb") as buffer:
+            buffer.write(await file.read())
+        filename = file.filename
+    elif hf_repo_id and hf_file_path:
+        filename = os.path.basename(hf_file_path)
+    else:
+        return JSONResponse(status_code=400, content={"error": "Either a video file upload or a Hugging Face dataset file is required."})
+    
     tasks[task_id] = {
         "status": "pending",
         "progress": 0,
-        "filename": file.filename,
+        "filename": filename,
         "results": None,
         "model_info": None,
         "analysis_settings": None,
@@ -247,6 +330,9 @@ async def analyze_video(
         mask_persons,
         generate_json,
         generate_video,
+        hf_repo_id,
+        hf_file_path,
+        hf_token,
     )
     
     return {"task_id": task_id, "status": "pending"}
