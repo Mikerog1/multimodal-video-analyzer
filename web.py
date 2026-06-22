@@ -529,18 +529,28 @@ async def get_history():
     if not os.path.exists(output_dir):
         return []
 
-    folders = sorted(
-        (f for f in os.listdir(output_dir)
-         if f.startswith("results_") and os.path.isdir(os.path.join(output_dir, f))),
-        reverse=True,
-    )
+    folders = [f for f in os.listdir(output_dir)
+               if f.startswith("results_") and os.path.isdir(os.path.join(output_dir, f))]
 
     runs = []
     for folder_name in folders:
         entry = _parse_run_folder(folder_name)
         if entry:
             runs.append(entry)
+
+    import datetime
+    def get_sort_key(entry):
+        if entry.get("run_date"):
+            return entry["run_date"]
+        try:
+            mtime = os.path.getmtime(os.path.join(output_dir, entry["folder"]))
+            return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return ""
+
+    runs.sort(key=get_sort_key, reverse=True)
     return runs
+
 
 
 @app.get("/api/history/{folder_name}")
