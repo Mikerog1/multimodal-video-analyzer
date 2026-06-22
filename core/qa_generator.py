@@ -1,4 +1,4 @@
-﻿import re
+import re
 import random
 from datetime import timedelta
 
@@ -42,16 +42,48 @@ def parse_filename_lighting(filename):
         return "day"
     return None
 
+CLASS_SYNONYMS = {
+    "person": ["person", "people", "pedestrian", "pedestrians", "walker", "walkers", "man", "woman", "men", "women"],
+    "car": ["car", "cars"],
+    "truck": ["truck", "trucks"],
+    "bus": ["bus", "buses"],
+    "motorcycle": ["motorcycle", "motorcycles", "motorbike", "motorbikes"],
+    "bicycle": ["bicycle", "bicycles", "bike", "bikes"],
+    "dog": ["dog", "dogs", "puppy", "puppies"],
+    "cat": ["cat", "cats", "kitten", "kittens"],
+    "traffic light": ["traffic light", "traffic lights"],
+    "traffic sign": ["traffic sign", "traffic signs", "stop sign", "stop signs"],
+    "bench": ["bench", "benches"],
+    "fire hydrant": ["fire hydrant", "fire hydrants"],
+    "stroller": ["stroller", "strollers", "baby carriage"]
+}
+
+VEHICLE_CLASSES = ["car", "truck", "bus", "motorcycle", "bicycle"]
+
+def parse_timestamp_to_seconds(ts_str: str) -> float:
+    """Converts a timestamp string in HH:MM:SS or MM:SS to seconds."""
+    parts = ts_str.split(':')
+    try:
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+    except ValueError:
+        pass
+    return 0.0
+
 def format_time(seconds):
     """Formats seconds into HH:MM:SS."""
     return str(timedelta(seconds=int(seconds)))
 
 class QAGenerator:
-    def __init__(self, filename, processed_frames, duration, qa_categories=None):
+    def __init__(self, filename, processed_frames, duration, qa_categories=None, captions=None, example_questions=None):
         self.filename = filename
         self.processed_frames = processed_frames
         self.duration = duration
         self.qa_categories = qa_categories if qa_categories is not None else ["counting", "negative", "ambiguity", "day_night"]
+        self.captions = captions
+        self.example_questions = example_questions
         
         # Determine global day/night from filename
         self.file_lighting = parse_filename_lighting(filename)
@@ -385,5 +417,116 @@ class QAGenerator:
                             "Trajectory linkage": None,
                             "Unanswerable flag": False
                         })
+
+        # --- 5. User Queries (Captions and Custom Predefined Questions) ---
+        if "user_queries" in self.qa_categories or self.captions or self.example_questions:
+            user_qa = []
+            if "user_queries" not in qa_by_category:
+                qa_by_category["user_queries"] = user_qa
+            else:
+                user_qa = qa_by_category["user_queries"]
+
+            if self.captions and self.captions.strip():
+                user_qa.append({
+                    "Question": "What is the context of this video?",
+                    "Answer": self.captions.strip(),
+                    "Answer format": "open-ended",
+                    "Evidence spans the video": f"00:00:00 - {format_time(self.duration)}",
+                    "Reasoning type": "summary-description",
+                    "Difficulty level": "easy",
+                    "Visibility quality": visibility if 'visibility' in locals() else "clear",
+                    "Day or night tag": self.file_lighting if self.file_lighting else "day",
+                    "Trajectory linkage": None,
+                    "Unanswerable flag": False
+                })
+
+            if self.example_questions:
+                # Parse and evaluate each question
+                questions_list = [q.strip() for q in self.example_questions.split('\n') if q.strip()]
+                for q in questions_list:
+                    q_lower = q.lower()
+                    
+                    # 1. Parse timestamps
+                    times = []
+                    for m in re.finditer(r'\b(?:\d{1,2}:)?\d{1,2}:\d{2}\b', q):
+                        times.append(parse_timestamp_to_seconds(m.group(0)))
+                    
+                    if len(times) >= 2:
+                        start_time, end_time = times[0], times[1]
+                    elif len(times) == 1:
+                        if "after" in q_lower:
+                            start_time, end_time = times[0], self.duration
+                        elif "before" in q_lower:
+                            start_time, end_time = 0.0, times[0]
+                        else:
+                            start_time, end_time = max(0.0, times[0] - 1.0), min(self.duration, times[0] + 1.0)
+                    else:
+                        start_time, end_time = 0.0, self.duration
+                    
+                    # Clamp start and end times to video duration
+                    start_time = max(0.0, min(start_time, self.duration))
+                    end_time = max(0.0, min(end_time, self.duration))
+                    if start_time > end_time:
+                        start_time, end_time = end_time, start_time
+                    
+                    # 2. Parse target classes
+                    requested_classes = []
+                    if "vehicle" in q_lower or "vehicles" in q_lower:
+                        requested_classes = VEHICLE_CLASSES
+                    else:
+                        for cls, synonyms in CLASS_SYNONYMS.items():
+                            if any(re.search(r'\b' + re.escape(syn) + r'\b', q_lower) for syn in synonyms):
+                                requested_classes.append(cls)
+                                if cls == "traffic sign":
+                                    requested_classes.append("stop sign")
+                    
+                    # 3. Count matching objects in timeframe
+                    count = 0
+                    for track in tracks:
+                        if track["label"] in requested_classes:
+                            track_boxes_in_seg = [b for b in track["boxes"] if start_time <= b[1] <= end_time]
+                            if track_boxes_in_seg:
+                                count += 1
+                    
+                    # 4. Classify query type (count vs presence)
+                    is_yes_no = False
+                    if any(w in q_lower for w in ["is there", "are there", "can you see", "do you see", "do we see", "present in"]):
+                        is_yes_no = True
+                    elif q_lower.startswith(("is", "are", "can", "do", "does", "has", "have", "was", "were")):
+                        is_yes_no = True
+                    
+                    if is_yes_no:
+                        answer = "yes" if count > 0 else "no"
+                        answer_format = "yes-no"
+                        reasoning_type = "presence-absence"
+                    else:
+                        answer = str(count)
+                        answer_format = "open-ended"
+                        reasoning_type = "counting"
+                    
+                    # Compute segment properties for metadata
+                    segment_frames = [f for f in self.processed_frames if start_time <= f["timestamp"] <= end_time]
+                    if segment_frames:
+                        avg_blur = sum(f.get("blur_var", 200.0) for f in segment_frames) / len(segment_frames)
+                        is_blurred = avg_blur < 80.0
+                        avg_brightness = sum(f.get("brightness", 128.0) for f in segment_frames) / len(segment_frames)
+                        seg_day_night = "night" if (self.file_lighting == "night" or avg_brightness < 55.0) else "day"
+                        seg_visibility = "blurred" if is_blurred else ("dark" if seg_day_night == "night" else "clear")
+                    else:
+                        seg_day_night = self.file_lighting if self.file_lighting else "day"
+                        seg_visibility = "clear"
+                    
+                    user_qa.append({
+                        "Question": q,
+                        "Answer": answer,
+                        "Answer format": answer_format,
+                        "Evidence spans the video": f"{format_time(start_time)} - {format_time(end_time)}",
+                        "Reasoning type": reasoning_type,
+                        "Difficulty level": "easy" if count <= 2 else "medium",
+                        "Visibility quality": seg_visibility,
+                        "Day or night tag": seg_day_night,
+                        "Trajectory linkage": None,
+                        "Unanswerable flag": False
+                    })
 
         return qa_by_category

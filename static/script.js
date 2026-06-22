@@ -246,6 +246,17 @@ document.addEventListener('DOMContentLoaded', () => {
         advancedContent.classList.toggle('open');
     });
 
+    // ─── Context & Guidance Toggle ───
+    const guidanceToggle = document.getElementById('guidance-settings-toggle');
+    const guidanceContent = document.getElementById('guidance-settings-content');
+
+    if (guidanceToggle && guidanceContent) {
+        guidanceToggle.addEventListener('click', () => {
+            guidanceToggle.classList.toggle('open');
+            guidanceContent.classList.toggle('open');
+        });
+    }
+
     // Currently active history folder (for highlighting)
     let activeHistoryFolder = null;
 
@@ -323,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
             qa_json_files: results.qa_json_files || [],
         };
 
-        showResults(normalizedResults, modelInfo, run.video_name || run.folder, analysisSettings);
+        showResults(normalizedResults, modelInfo, run.video_name || run.folder, analysisSettings, run.object_counts);
     }
 
     // Form submission
@@ -386,11 +397,19 @@ document.addEventListener('DOMContentLoaded', () => {
         formData.set('mask_persons', document.getElementById('mask_persons').checked ? 'true' : 'false');
 
         // Compile QA Categories — generate_qa is true if any category is checked
+        const captionsVal = document.getElementById('captions') ? document.getElementById('captions').value.trim() : '';
+        const questionsVal = document.getElementById('example_questions') ? document.getElementById('example_questions').value.trim() : '';
+
         const activeQaCategories = [];
         if (document.getElementById('qa_counting').checked) activeQaCategories.push('counting');
         if (document.getElementById('qa_negative').checked) activeQaCategories.push('negative');
         if (document.getElementById('qa_ambiguity').checked) activeQaCategories.push('ambiguity');
         if (document.getElementById('qa_day_night').checked) activeQaCategories.push('day_night');
+        
+        if (captionsVal || questionsVal) {
+            activeQaCategories.push('user_queries');
+        }
+
         formData.set('generate_qa', activeQaCategories.length > 0 ? 'true' : 'false');
         formData.set('qa_categories', activeQaCategories.join(','));
 
@@ -434,7 +453,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             
             if (data.status === 'completed') {
-                showResults(data.results, data.model_info, undefined, data.analysis_settings);
+                showResults(data.results, data.model_info, undefined, data.analysis_settings, data.object_counts);
                 // Refresh the sidebar history to include the new run
                 loadHistory();
             } else if (data.status === 'error') {
@@ -483,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Display functions
-    function showResults(results, modelInfo, displayName, analysisSettings) {
+    function showResults(results, modelInfo, displayName, analysisSettings, objectCounts) {
         loadingOverlay.classList.add('hidden');
         mainPanel.classList.add('hidden');
         resultsPanel.classList.remove('hidden');
@@ -525,6 +544,48 @@ document.addEventListener('DOMContentLoaded', () => {
                 metaDisplay.innerHTML = html;
             } else {
                 metaDisplay.style.display = 'none';
+            }
+        }
+
+        // Render object count stats
+        const statsDisplay = document.getElementById('object-stats-display');
+        if (statsDisplay) {
+            statsDisplay.innerHTML = '';
+            if (objectCounts && Object.keys(objectCounts).length > 0) {
+                statsDisplay.classList.remove('hidden');
+                
+                // Map common classes to appropriate emojis
+                const iconMap = {
+                    'person': '🚶',
+                    'car': '🚗',
+                    'truck': '🚚',
+                    'bus': '🚌',
+                    'motorcycle': '🏍️',
+                    'bicycle': '🚲',
+                    'dog': '🐶',
+                    'cat': '🐱',
+                    'traffic light': '🚦',
+                    'stop sign': '🛑',
+                    'bench': '🪑',
+                    'fire hydrant': '🧯',
+                    'stroller': '👶'
+                };
+                
+                Object.entries(objectCounts).forEach(([label, count]) => {
+                    const icon = iconMap[label.toLowerCase()] || '📦';
+                    const card = document.createElement('div');
+                    card.className = 'stat-card';
+                    card.innerHTML = `
+                        <div class="stat-card-icon">${icon}</div>
+                        <div class="stat-card-content">
+                            <span class="stat-card-count">${count}</span>
+                            <span class="stat-card-label">${label}</span>
+                        </div>
+                    `;
+                    statsDisplay.appendChild(card);
+                });
+            } else {
+                statsDisplay.classList.add('hidden');
             }
         }
         
@@ -1216,7 +1277,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .then(data => {
                 if (data.status === 'completed') {
-                    showResults(data.results, data.model_info, videoParam, data.analysis_settings);
+                    showResults(data.results, data.model_info, videoParam, data.analysis_settings, data.object_counts);
                     fileNameDisplay.textContent = videoParam;
                     mainPanel.classList.add('hidden');
                 }

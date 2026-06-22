@@ -238,6 +238,34 @@
                                 </div>
                             </div>
 
+                            <!-- Collapsible Context & Guidance -->
+                            <div class="guidance-settings-wrapper">
+                                <button type="button" class="guidance-settings-toggle" id="guidance-settings-toggle">
+                                    <svg class="guidance-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                    Context & Guidance (Optional)
+                                </button>
+                                <div class="guidance-settings-content" id="guidance-settings-content">
+                                    <div class="guidance-grid">
+                                        <div class="param-group full-width">
+                                            <div class="label-row">
+                                                <label for="captions">Video Description / Captions</label>
+                                                <span class="info-tip" data-tooltip="Provide general captions or summary text of the video. This will be used to generate summary QA context."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                                            </div>
+                                            <textarea id="captions" name="captions" placeholder="e.g. A dashcam recording of a vehicle driving down a highway at sunset under rainy weather."></textarea>
+                                        </div>
+                                        <div class="param-group full-width">
+                                            <div class="label-row">
+                                                <label for="example_questions">Predefined Example Questions (one per line)</label>
+                                                <span class="info-tip" data-tooltip="Enter custom predefined questions (one per line). The parser supports counting ('How many...') and presence ('Is there a...') within specific timeframes."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                                            </div>
+                                            <textarea id="example_questions" name="example_questions" placeholder="e.g. How many cars are visible between 00:00:02 and 00:00:10?&#10;Is there a pedestrian present in the video?"></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Output config: two side-by-side cards -->
                             <div class="output-config-grid">
 
@@ -317,6 +345,7 @@
                             <span id="result-filename">Analysis Complete</span>
                         </h2>
                         <div class="analysis-meta-info" id="meta-info-display"></div>
+                        <div class="object-stats-display hidden" id="object-stats-display"></div>
                         <div class="results-content">
                                 <div class="video-container">
                                     <video id="result-video" controls>

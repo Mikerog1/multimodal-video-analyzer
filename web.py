@@ -65,6 +65,8 @@ def run_analysis(
     hf_repo_id: str = None,
     hf_file_path: str = None,
     hf_token: str = None,
+    captions: str = None,
+    example_questions: str = None,
 ):
     try:
         if hf_repo_id and hf_file_path:
@@ -141,6 +143,8 @@ def run_analysis(
             mask_persons=mask_persons,
             write_json=generate_json,
             generate_video=generate_video,
+            captions=captions,
+            example_questions=example_questions,
         )
         
         current_folders = set(os.listdir(output_dir))
@@ -173,15 +177,20 @@ def run_analysis(
 
             # Read analysis settings from the generated JSON
             analysis_settings = None
+            object_counts = {}
             if json_file:
                 try:
                     with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
                         report_data = py_json.load(jf)
                         meta = report_data.get("metadata", {})
                         analysis_settings = _extract_analysis_settings(meta)
+                        for obj in report_data.get("objects", []):
+                            obj_type = obj.get("object_type", "unknown")
+                            object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
                 except Exception:
                     pass
             tasks[task_id]["analysis_settings"] = analysis_settings
+            tasks[task_id]["object_counts"] = object_counts
 
             tasks[task_id]["status"] = "completed"
         else:
@@ -278,6 +287,8 @@ async def analyze_video(
     remove_audio: bool = Form(False),
     mask_persons: bool = Form(False),
     generate_video: bool = Form(True),
+    captions: str = Form(None),
+    example_questions: str = Form(None),
 ):
     task_id = str(uuid.uuid4())
     
@@ -306,6 +317,7 @@ async def analyze_video(
         "results": None,
         "model_info": None,
         "analysis_settings": None,
+        "object_counts": {},
         "error": None
     }
     
@@ -333,6 +345,8 @@ async def analyze_video(
         hf_repo_id,
         hf_file_path,
         hf_token,
+        captions,
+        example_questions,
     )
     
     return {"task_id": task_id, "status": "pending"}
@@ -421,6 +435,7 @@ async def get_results(video: str):
     
     model_info = None
     analysis_settings = None
+    object_counts = {}
     if json_file:
         try:
             with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
@@ -435,10 +450,19 @@ async def get_results(video: str):
                     "device": str(dev).upper()
                 }
                 analysis_settings = _extract_analysis_settings(meta)
+                for obj in report_data.get("objects", []):
+                    obj_type = obj.get("object_type", "unknown")
+                    object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
         except Exception as e:
             print(f"[-] Error reading metadata from json: {e}")
             
-    return {"status": "completed", "results": results, "model_info": model_info, "analysis_settings": analysis_settings}
+    return {
+        "status": "completed",
+        "results": results,
+        "model_info": model_info,
+        "analysis_settings": analysis_settings,
+        "object_counts": object_counts,
+    }
 
 
 def _extract_analysis_settings(meta: dict) -> dict:
@@ -490,6 +514,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
     # Try to read model info + analysis settings from analysis JSON
     model_info = None
     analysis_settings = None
+    object_counts = {}
     if json_file:
         try:
             with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
@@ -504,6 +529,9 @@ def _parse_run_folder(folder_name: str) -> dict | None:
                     "device": str(dev).upper()
                 }
                 analysis_settings = _extract_analysis_settings(meta)
+                for obj in report_data.get("objects", []):
+                    obj_type = obj.get("object_type", "unknown")
+                    object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
         except Exception:
             pass
 
@@ -513,6 +541,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
         "run_date": run_date,
         "model_info": model_info,
         "analysis_settings": analysis_settings,
+        "object_counts": object_counts,
         "files": {
             "video": f"/output/{folder_name}/{video_file}" if video_file else None,
             "is_original_video": analyzed_video is None and video_file is not None,

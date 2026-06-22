@@ -44,6 +44,8 @@ class VideoProcessor:
         progress_callback=None,
         mask_persons: bool = False,
         generate_video: bool = True,
+        captions: str = None,
+        example_questions: str = None,
     ) -> None:
         """Processes the video with object detection/tracking and writes reports."""
 
@@ -220,7 +222,14 @@ class VideoProcessor:
         out_qa_paths = []
         if generate_qa:
             qa_cats = qa_categories if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
-            qa_generator = QAGenerator(filename, processed_frames_data, duration, qa_categories=qa_cats)
+            qa_generator = QAGenerator(
+                filename, 
+                processed_frames_data, 
+                duration, 
+                qa_categories=qa_cats,
+                captions=captions,
+                example_questions=example_questions
+            )
             qa_by_category = qa_generator.generate_qa_pairs()
             out_qa_paths = save_qa_report(run_output_dir, base_name, qa_by_category)
 
