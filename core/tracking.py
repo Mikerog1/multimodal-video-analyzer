@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from utils.time_utils import seconds_to_timestamp
+from utils.time_utils import seconds_to_timestamp, timestamp_to_seconds
 
 
 TRACKER = "bytetrack.yaml"
@@ -291,3 +291,91 @@ class SimpleTracker:
                 confidence=confidence,
             )
         )
+
+
+def merge_tracked_objects(
+    tracked_objects: dict[int, TrackedObject],
+    max_time_gap: float = 2.0,
+    max_distance: float = 150.0,
+) -> dict[int, TrackedObject]:
+    """Merges fragmented tracks of the same class that are close in space and time."""
+    by_type = {}
+    for tid, obj in tracked_objects.items():
+        if obj.object_type not in by_type:
+            by_type[obj.object_type] = []
+        by_type[obj.object_type].append((tid, obj))
+
+    merged_ids = set()
+
+    for obj_type, items in by_type.items():
+        # Sort items by first_time_seen_seconds
+        items.sort(key=lambda x: x[1].first_time_seen_seconds)
+
+        # Iteratively try to merge tracks
+        changed = True
+        while changed:
+            changed = False
+            for i in range(len(items)):
+                tid_a, obj_a = items[i]
+                if tid_a in merged_ids:
+                    continue
+
+                for j in range(i + 1, len(items)):
+                    tid_b, obj_b = items[j]
+                    if tid_b in merged_ids:
+                        continue
+
+                    if not obj_a.bbox_observations or not obj_b.bbox_observations:
+                        continue
+
+                    try:
+                        time_a_end = timestamp_to_seconds(obj_a.bbox_observations[-1].timestamp)
+                        time_b_start = timestamp_to_seconds(obj_b.bbox_observations[0].timestamp)
+                    except ValueError:
+                        time_a_end = obj_a.first_time_seen_seconds + obj_a.screen_time_seconds
+                        time_b_start = obj_b.first_time_seen_seconds
+
+                    time_gap = time_b_start - time_a_end
+
+                    if 0 <= time_gap <= max_time_gap:
+                        box_a = [
+                            obj_a.bbox_observations[-1].x1,
+                            obj_a.bbox_observations[-1].y1,
+                            obj_a.bbox_observations[-1].x2,
+                            obj_a.bbox_observations[-1].y2,
+                        ]
+                        box_b = [
+                            obj_b.bbox_observations[0].x1,
+                            obj_b.bbox_observations[0].y1,
+                            obj_b.bbox_observations[0].x2,
+                            obj_b.bbox_observations[0].y2,
+                        ]
+
+                        center_a = [(box_a[0] + box_a[2]) / 2, (box_a[1] + box_a[3]) / 2]
+                        center_b = [(box_b[0] + box_b[2]) / 2, (box_b[1] + box_b[3]) / 2]
+
+                        dist = ((center_a[0] - center_b[0]) ** 2 + (center_a[1] - center_b[1]) ** 2) ** 0.5
+
+                        if dist <= max_distance:
+                            obj_a.bbox_observations.extend(obj_b.bbox_observations)
+                            obj_a.bbox_observations.sort(
+                                key=lambda obs: timestamp_to_seconds(obs.timestamp)
+                            )
+                            obj_a.screen_time_seconds += obj_b.screen_time_seconds
+                            obj_a.first_time_seen_seconds = min(
+                                obj_a.first_time_seen_seconds, obj_b.first_time_seen_seconds
+                            )
+
+                            merged_ids.add(tid_b)
+                            changed = True
+                            break
+                if changed:
+                    break
+
+    # Remove merged tracks
+    for tid in merged_ids:
+        if tid in tracked_objects:
+            del tracked_objects[tid]
+
+    return tracked_objects
+

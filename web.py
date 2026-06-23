@@ -1,6 +1,7 @@
 import os
 import sys
 import uuid
+import time
 import asyncio
 import json as py_json
 import concurrent.futures
@@ -45,6 +46,336 @@ tasks = {}
 
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
+def generate_captions_with_qwen(video_path: str) -> str:
+    """Loads Qwen2-VL-2B-Instruct locally and generates a caption description for the video."""
+    try:
+        import torch
+        from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+        from qwen_vl_utils import process_vision_info
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_id = "Qwen/Qwen2-VL-2B-Instruct"
+        
+        # Load model and processor
+        model = Qwen2VLForConditionalGeneration.from_pretrained(
+            model_id,
+            torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+            device_map="auto"
+        )
+        processor = AutoProcessor.from_pretrained(model_id)
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "video",
+                        "video": video_path,
+                        "max_pixels": 360 * 360,
+                        "fps": 0.5,
+                    },
+                    {"type": "text", "text": "Describe the content and main actions of this video briefly in 1-2 sentences."},
+                ],
+            }
+        ]
+
+        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, video_inputs, video_kwargs = process_vision_info(messages)
+
+        inputs = processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            video_kwargs=video_kwargs,
+            padding=True,
+            return_tensors="pt"
+        ).to(device)
+
+        generated_ids = model.generate(**inputs, max_new_tokens=100)
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        return output_text[0].strip()
+    except Exception as e:
+        print(f"[-] Error in Qwen2-VL caption generation: {e}")
+        return f"Error generating caption: {str(e)}"
+
+class CustomCloudDetector:
+    def __init__(self, api_url: str, api_key: str, confidence: float = 0.5):
+        self.api_url = api_url
+        self.api_key = api_key
+        self.confidence = confidence
+        self.model_id = "custom_cloud_detector"
+        self.device = "cloud"
+
+    def detect(self, pil_image) -> list[dict]:
+        import io
+        import requests
+        try:
+            buffer = io.BytesIO()
+            pil_image.save(buffer, format="JPEG")
+            img_bytes = buffer.getvalue()
+            
+            files = {"file": ("frame.jpg", img_bytes, "image/jpeg")}
+            headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+            
+            response = requests.post(self.api_url, files=files, headers=headers, timeout=10)
+            if response.status_code == 200:
+                results = response.json()
+                filtered = []
+                for det in results:
+                    score = det.get("score", 1.0)
+                    if score >= self.confidence:
+                        filtered.append({
+                            "label": det.get("label", "unknown"),
+                            "score": score,
+                            "box": det.get("box", [0, 0, 0, 0])
+                        })
+                return filtered
+            else:
+                print(f"[-] Cloud API returned code {response.status_code}: {response.text}")
+        except Exception as e:
+            print(f"[-] Error calling custom cloud detector: {e}")
+        return []
+
+def extract_keyframes(video_path: str, max_keyframes: int = 6) -> list[str]:
+    """Extracts base64 encoded JPEGs uniformly distributed across the video."""
+    import cv2
+    import base64
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return []
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames <= 0:
+        cap.release()
+        return []
+        
+    step = max(1, total_frames // max_keyframes)
+    keyframes = []
+    
+    for i in range(max_keyframes):
+        frame_idx = min(total_frames - 1, i * step)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+        _, buffer = cv2.imencode(".jpg", frame)
+        b64 = base64.b64encode(buffer).decode("utf-8")
+        keyframes.append(b64)
+        
+    cap.release()
+    return keyframes
+
+def generate_captions_with_gemini(video_path: str, api_key: str) -> str:
+    import requests
+    keyframes = extract_keyframes(video_path, max_keyframes=6)
+    if not keyframes:
+        return "Could not extract video keyframes."
+        
+    parts = [{"text": "These are chronological keyframes from a video. Describe the video content, main actions, and environment briefly in 2-3 sentences."}]
+    for b64 in keyframes:
+        parts.append({
+            "inlineData": {
+                "mimeType": "image/jpeg",
+                "data": b64
+            }
+        })
+        
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    payload = {"contents": [{"parts": parts}]}
+    try:
+        res = requests.post(url, json=payload, timeout=20)
+        res.raise_for_status()
+        data = res.json()
+        return data["contents"][0]["parts"][0]["text"].strip()
+    except Exception as e:
+        print(f"[-] Gemini caption generation failed: {e}")
+        return f"Gemini caption generation error: {str(e)}"
+
+def generate_captions_with_custom_vlm(video_path: str, api_url: str, api_key: str, model_id: str) -> str:
+    import requests
+    keyframes = extract_keyframes(video_path, max_keyframes=6)
+    if not keyframes:
+        return "Could not extract video keyframes."
+        
+    content = [{"type": "text", "text": "These are chronological keyframes from a video. Describe the video content, main actions, and environment briefly in 2-3 sentences."}]
+    for b64 in keyframes:
+        content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{b64}"
+            }
+        })
+        
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        
+    url = api_url.rstrip("/")
+    if not url.endswith("/chat/completions"):
+        url = f"{url}/chat/completions"
+        
+    payload = {
+        "model": model_id or "gpt-4o",
+        "messages": [{"role": "user", "content": content}]
+    }
+    try:
+        res = requests.post(url, json=payload, headers=headers, timeout=30)
+        res.raise_for_status()
+        data = res.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"[-] Custom VLM caption generation failed: {e}")
+        return f"Custom VLM caption generation error: {str(e)}"
+
+def run_analysis_single(
+    task_id: str,
+    video_path: str,
+    output_dir: str,
+    model_type: str,
+    model_id: str,
+    device: str,
+    codec: str,
+    confidence: float,
+    fps_sample: float,
+    resize_factor: float,
+    save_sampled_only: bool,
+    generate_qa: bool,
+    qa_categories: str,
+    mask_persons: bool = False,
+    generate_json: bool = True,
+    generate_video: bool = True,
+    progress_callback=None,
+    captions: str = None,
+    example_questions: str = None,
+    custom_detector_id: str = None,
+    detector_api_url: str = None,
+    detector_api_key: str = None,
+    vlm_model: str = "none",
+    gemini_api_key: str = None,
+    vlm_api_url: str = None,
+    vlm_api_key: str = None,
+    vlm_model_id: str = None,
+):
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Load the appropriate model
+    if model_type == "yolo":
+        from models.yolo_detector import YoloDetector
+        if not model_id:
+            model_id = os.path.join("models", "yolov8n.pt")
+        elif not os.path.dirname(model_id):
+            model_id = os.path.join("models", model_id)
+        detector = YoloDetector(model_id, device, confidence)
+    elif model_type == "custom_local":
+        from models.yolo_detector import YoloDetector
+        from models.detr_detector import DetrDetector
+        det_id = custom_detector_id or model_id or "yolov8n.pt"
+        if "detr" in det_id.lower() or "facebook" in det_id.lower():
+            detector = DetrDetector(det_id, device, confidence)
+        else:
+            if not os.path.dirname(det_id) and not det_id.endswith(".pt") and '/' not in det_id:
+                det_id = os.path.join("models", det_id)
+            detector = YoloDetector(det_id, device, confidence)
+    elif model_type == "custom_api":
+        detector = CustomCloudDetector(api_url=detector_api_url, api_key=detector_api_key, confidence=confidence)
+    else:
+        from models.detr_detector import DetrDetector
+        if not model_id:
+            model_id = "facebook/detr-resnet-50"
+        detector = DetrDetector(model_id, device, confidence)
+        
+    processor = VideoProcessor(detector)
+    
+    tasks[task_id]["model_info"] = {
+        "model_type": "YOLO" if model_type == "yolo" else ("DETR" if model_type == "detr" else "CUSTOM"),
+        "model_name": detector.model_id.split(os.sep)[-1].split('/')[-1] if hasattr(detector, "model_id") else str(model_id or "custom"),
+        "device": str(getattr(detector, "device", device)).upper()
+    }
+    
+    existing_folders = set(os.listdir(output_dir)) if os.path.exists(output_dir) else set()
+    
+    def update_progress(current, total):
+        if progress_callback:
+            progress_callback(current, total)
+        else:
+            tasks[task_id]["progress"] = round((current / total) * 100) if total > 0 else 0
+
+    qa_cats = [c.strip() for c in qa_categories.split(',')] if qa_categories else []
+
+    processor.process_video(
+        video_path=video_path,
+        output_dir=output_dir,
+        fps_sample=fps_sample,
+        codec=codec,
+        resize_factor=resize_factor,
+        save_sampled_only=save_sampled_only,
+        generate_qa=generate_qa,
+        qa_categories=qa_cats,
+        progress_callback=update_progress,
+        mask_persons=mask_persons,
+        write_json=generate_json,
+        generate_video=generate_video,
+        captions=captions,
+        example_questions=example_questions,
+        gemini_api_key=gemini_api_key,
+        custom_vlm_url=vlm_api_url,
+        custom_vlm_key=vlm_api_key,
+        custom_vlm_model_id=vlm_model_id,
+    )
+    
+    current_folders = set(os.listdir(output_dir))
+    new_folders = current_folders - existing_folders
+    
+    if new_folders:
+        run_folder = sorted(list(new_folders))[-1]
+        run_path = os.path.join(output_dir, run_folder)
+        
+        # Find the output files
+        files = os.listdir(run_path)
+        video_exts = ('.mp4', '.avi', '.mkv', '.webm', '.mov')
+        analyzed_video = next((f for f in files if f.endswith(video_exts) and '_analyzed' in f), None)
+        original_video = next((f for f in files if f.endswith(video_exts) and '_original' in f), None)
+        any_video = next((f for f in files if f.endswith(video_exts)), None) if not analyzed_video and not original_video else None
+        video_file = analyzed_video or original_video or any_video
+        csv_file = next((f for f in files if f.endswith('.csv') and f != 'total_report.csv'), None)
+        json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
+        qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
+        
+        tasks[task_id]["results"] = {
+            "folder": f"/output/{run_folder}",
+            "video": f"/output/{run_folder}/{video_file}" if video_file else None,
+            "is_original_video": analyzed_video is None and video_file is not None,
+            "csv": f"/output/{run_folder}/{csv_file}" if csv_file else None,
+            "json": f"/output/{run_folder}/{json_file}" if json_file else None,
+            "qa_json_files": [f"/output/{run_folder}/{f}" for f in qa_json_files],
+        }
+
+        # Read analysis settings from the generated JSON
+        analysis_settings = None
+        object_counts = {}
+        if json_file:
+            try:
+                with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
+                    report_data = py_json.load(jf)
+                    meta = report_data.get("metadata", {})
+                    analysis_settings = _extract_analysis_settings(meta)
+                    for obj in report_data.get("objects", []):
+                        obj_type = obj.get("object_type", "unknown")
+                        object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
+            except Exception:
+                pass
+        tasks[task_id]["analysis_settings"] = analysis_settings
+        tasks[task_id]["object_counts"] = object_counts
+    else:
+        raise RuntimeError("No output directory was created.")
+
 def run_analysis(
     task_id: str,
     video_path: str,
@@ -67,6 +398,15 @@ def run_analysis(
     hf_token: str = None,
     captions: str = None,
     example_questions: str = None,
+    auto_generate_captions: bool = False,
+    custom_detector_id: str = None,
+    detector_api_url: str = None,
+    detector_api_key: str = None,
+    vlm_model: str = "none",
+    gemini_api_key: str = None,
+    vlm_api_url: str = None,
+    vlm_api_key: str = None,
+    vlm_model_id: str = None,
 ):
     try:
         if hf_repo_id and hf_file_path:
@@ -86,116 +426,102 @@ def run_analysis(
             )
             tasks[task_id]["filename"] = os.path.basename(video_path)
 
-        tasks[task_id]["status"] = "loading_model"
-        tasks[task_id]["progress"] = 0
-        
-        if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        # Load the appropriate model
-        if model_type == "yolo":
-            from models.yolo_detector import YoloDetector
-            if not model_id:
-                model_id = os.path.join("models", "yolov8n.pt")
-            elif not os.path.dirname(model_id):
-                model_id = os.path.join("models", model_id)
-            detector = YoloDetector(model_id, device, confidence)
-        else:
-            from models.detr_detector import DetrDetector
-            if not model_id:
-                model_id = "facebook/detr-resnet-50"
-            detector = DetrDetector(model_id, device, confidence)
+        # Generate captions using selected VLM if requested or auto-generate is enabled
+        if not captions or not captions.strip():
+            if vlm_model == "qwen" or auto_generate_captions:
+                tasks[task_id]["status"] = "generating_captions"
+                tasks[task_id]["progress"] = 0
+                captions = generate_captions_with_qwen(video_path)
+            elif vlm_model == "gemini" and gemini_api_key:
+                tasks[task_id]["status"] = "generating_captions"
+                tasks[task_id]["progress"] = 0
+                captions = generate_captions_with_gemini(video_path, gemini_api_key)
+            elif vlm_model == "custom_vlm" and vlm_api_url:
+                tasks[task_id]["status"] = "generating_captions"
+                tasks[task_id]["progress"] = 0
+                captions = generate_captions_with_custom_vlm(video_path, vlm_api_url, vlm_api_key, vlm_model_id)
+
+        if model_type == "all":
+            models_to_run = [
+                ("yolo", "yolo26n.pt"),
+                ("yolo", "yolov8n.pt"),
+                ("detr", "facebook/detr-resnet-50")
+            ]
             
-        processor = VideoProcessor(detector)
-        
-        # Store model info in task dict
-        tasks[task_id]["model_info"] = {
-            "model_type": "YOLO" if model_type == "yolo" else "DETR",
-            "model_name": detector.model_id.split(os.sep)[-1].split('/')[-1] if hasattr(detector, "model_id") else str(model_id),
-            "device": str(detector.device).upper() if hasattr(detector, "device") else str(device).upper()
-        }
-        
-        tasks[task_id]["status"] = "analyzing"
-        
-        # Override print to capture some output if needed, but for now we just run it
-        # Note: We need a way to know the exact output directory since it's timestamped.
-        # Actually, VideoProcessor creates a timestamped folder inside output_dir.
-        # Let's inspect the output directory before and after to find the new folder,
-        # or we could patch the processor to return the paths.
-        
-        existing_folders = set(os.listdir(output_dir)) if os.path.exists(output_dir) else set()
-        
-        def update_progress(current, total):
-            tasks[task_id]["progress"] = round((current / total) * 100) if total > 0 else 0
-
-        qa_cats = [c.strip() for c in qa_categories.split(',')] if qa_categories else []
-
-        processor.process_video(
-            video_path=video_path,
-            output_dir=output_dir,
-            fps_sample=fps_sample,
-            codec=codec,
-            resize_factor=resize_factor,
-            save_sampled_only=save_sampled_only,
-            generate_qa=generate_qa,
-            qa_categories=qa_cats,
-            progress_callback=update_progress,
-            mask_persons=mask_persons,
-            write_json=generate_json,
-            generate_video=generate_video,
-            captions=captions,
-            example_questions=example_questions,
-        )
-        
-        current_folders = set(os.listdir(output_dir))
-        new_folders = current_folders - existing_folders
-        
-        if new_folders:
-            run_folder = list(new_folders)[0]
-            run_path = os.path.join(output_dir, run_folder)
-            
-            # Find the output files
-            files = os.listdir(run_path)
-            video_exts = ('.mp4', '.avi', '.mkv', '.webm', '.mov')
-            analyzed_video = next((f for f in files if f.endswith(video_exts) and '_analyzed' in f), None)
-            original_video = next((f for f in files if f.endswith(video_exts) and '_original' in f), None)
-            # Fallback: any video file
-            any_video = next((f for f in files if f.endswith(video_exts)), None) if not analyzed_video and not original_video else None
-            video_file = analyzed_video or original_video or any_video
-            csv_file = next((f for f in files if f.endswith('.csv') and f != 'total_report.csv'), None)
-            json_file = next((f for f in files if f.endswith('.json') and '_qa_' not in f), None)
-            qa_json_files = sorted([f for f in files if f.endswith('.json') and '_qa_' in f])
-            
-            tasks[task_id]["results"] = {
-                "folder": f"/output/{run_folder}",
-                "video": f"/output/{run_folder}/{video_file}" if video_file else None,
-                "is_original_video": analyzed_video is None and video_file is not None,
-                "csv": f"/output/{run_folder}/{csv_file}" if csv_file else None,
-                "json": f"/output/{run_folder}/{json_file}" if json_file else None,
-                "qa_json_files": [f"/output/{run_folder}/{f}" for f in qa_json_files],
-            }
-
-            # Read analysis settings from the generated JSON
-            analysis_settings = None
-            object_counts = {}
-            if json_file:
-                try:
-                    with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
-                        report_data = py_json.load(jf)
-                        meta = report_data.get("metadata", {})
-                        analysis_settings = _extract_analysis_settings(meta)
-                        for obj in report_data.get("objects", []):
-                            obj_type = obj.get("object_type", "unknown")
-                            object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
-                except Exception:
-                    pass
-            tasks[task_id]["analysis_settings"] = analysis_settings
-            tasks[task_id]["object_counts"] = object_counts
-
+            last_results = None
+            for idx, (m_type, m_id) in enumerate(models_to_run):
+                tasks[task_id]["status"] = f"Running model {idx+1}/{len(models_to_run)} ({m_id})..."
+                tasks[task_id]["progress"] = round((idx / len(models_to_run)) * 100)
+                
+                def sub_progress(current, total):
+                    fraction = current / total if total > 0 else 0
+                    tasks[task_id]["progress"] = round(((idx + fraction) / len(models_to_run)) * 100)
+                
+                if not os.path.exists(video_path):
+                    raise FileNotFoundError(f"Input video file not found at: {video_path}")
+                
+                run_analysis_single(
+                    task_id=task_id,
+                    video_path=video_path,
+                    output_dir=output_dir,
+                    model_type=m_type,
+                    model_id=m_id,
+                    device=device,
+                    codec=codec,
+                    confidence=confidence,
+                    fps_sample=fps_sample,
+                    resize_factor=resize_factor,
+                    save_sampled_only=save_sampled_only,
+                    generate_qa=generate_qa,
+                    qa_categories=qa_categories,
+                    mask_persons=mask_persons,
+                    generate_json=generate_json,
+                    generate_video=generate_video,
+                    progress_callback=sub_progress,
+                    captions=captions,
+                    example_questions=example_questions,
+                    gemini_api_key=gemini_api_key,
+                    vlm_api_url=vlm_api_url,
+                    vlm_api_key=vlm_api_key,
+                    vlm_model_id=vlm_model_id,
+                )
+                last_results = tasks[task_id]["results"]
+                
+            tasks[task_id]["results"] = last_results
             tasks[task_id]["status"] = "completed"
         else:
-            tasks[task_id]["status"] = "error"
-            tasks[task_id]["error"] = "No output directory was created."
+            tasks[task_id]["status"] = "loading_model"
+            tasks[task_id]["progress"] = 0
+            
+            run_analysis_single(
+                task_id=task_id,
+                video_path=video_path,
+                output_dir=output_dir,
+                model_type=model_type,
+                model_id=model_id,
+                device=device,
+                codec=codec,
+                confidence=confidence,
+                fps_sample=fps_sample,
+                resize_factor=resize_factor,
+                save_sampled_only=save_sampled_only,
+                generate_qa=generate_qa,
+                qa_categories=qa_categories,
+                mask_persons=mask_persons,
+                generate_json=generate_json,
+                generate_video=generate_video,
+                captions=captions,
+                example_questions=example_questions,
+                custom_detector_id=custom_detector_id,
+                detector_api_url=detector_api_url,
+                detector_api_key=detector_api_key,
+                vlm_model=vlm_model,
+                gemini_api_key=gemini_api_key,
+                vlm_api_url=vlm_api_url,
+                vlm_api_key=vlm_api_key,
+                vlm_model_id=vlm_model_id,
+            )
+            tasks[task_id]["status"] = "completed"
             
     except Exception as e:
         tasks[task_id]["status"] = "error"
@@ -207,7 +533,6 @@ def run_analysis(
                 if os.path.isfile(video_path):
                     os.remove(video_path)
                 upload_dir = os.path.dirname(video_path)
-                # Keep removing empty directories up to input_dir
                 while upload_dir and upload_dir != input_dir and os.path.exists(upload_dir) and not os.listdir(upload_dir):
                     os.rmdir(upload_dir)
                     upload_dir = os.path.dirname(upload_dir)
@@ -289,6 +614,15 @@ async def analyze_video(
     generate_video: bool = Form(True),
     captions: str = Form(None),
     example_questions: str = Form(None),
+    auto_generate_captions: bool = Form(False),
+    custom_detector_id: str = Form(None),
+    detector_api_url: str = Form(None),
+    detector_api_key: str = Form(None),
+    vlm_model: str = Form("none"),
+    gemini_api_key: str = Form(None),
+    vlm_api_url: str = Form(None),
+    vlm_api_key: str = Form(None),
+    vlm_model_id: str = Form(None),
 ):
     task_id = str(uuid.uuid4())
     
@@ -347,6 +681,15 @@ async def analyze_video(
         hf_token,
         captions,
         example_questions,
+        auto_generate_captions,
+        custom_detector_id,
+        detector_api_url,
+        detector_api_key,
+        vlm_model,
+        gemini_api_key,
+        vlm_api_url,
+        vlm_api_key,
+        vlm_model_id,
     )
     
     return {"task_id": task_id, "status": "pending"}
@@ -427,6 +770,7 @@ async def get_results(video: str):
     results = {
         "folder": f"/output/{latest_folder}",
         "video": f"/output/{latest_folder}/{video_file}" if video_file else None,
+        "original_video": f"/output/{latest_folder}/{original_video}" if original_video else None,
         "is_original_video": analyzed_video is None and video_file is not None,
         "csv": f"/output/{latest_folder}/{csv_file}" if csv_file else None,
         "json": f"/output/{latest_folder}/{json_file}" if json_file else None,
@@ -544,6 +888,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
         "object_counts": object_counts,
         "files": {
             "video": f"/output/{folder_name}/{video_file}" if video_file else None,
+            "original_video": f"/output/{folder_name}/{original_video}" if original_video else None,
             "is_original_video": analyzed_video is None and video_file is not None,
             "csv": f"/output/{folder_name}/{csv_file}" if csv_file else None,
             "json": f"/output/{folder_name}/{json_file}" if json_file else None,
@@ -554,7 +899,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
 
 @app.get("/api/history")
 async def get_history():
-    """Return a list of all analysis runs found in the output directory, newest first."""
+    """Return all analysis runs found in the output directory grouped by video_name, newest first."""
     if not os.path.exists(output_dir):
         return []
 
@@ -578,7 +923,28 @@ async def get_history():
             return ""
 
     runs.sort(key=get_sort_key, reverse=True)
-    return runs
+
+    # Group by video_name
+    grouped = {}
+    for entry in runs:
+        vname = entry.get("video_name") or entry.get("folder")
+        if vname not in grouped:
+            grouped[vname] = {
+                "video_name": vname,
+                "latest_run_date": entry.get("run_date"),
+                "runs": []
+            }
+        grouped[vname]["runs"].append(entry)
+        rdate = entry.get("run_date")
+        if rdate:
+            ldate = grouped[vname]["latest_run_date"]
+            if not ldate or rdate > ldate:
+                grouped[vname]["latest_run_date"] = rdate
+
+    # Convert to list and sort by latest run date
+    history_list = list(grouped.values())
+    history_list.sort(key=lambda x: x["latest_run_date"] or "", reverse=True)
+    return history_list
 
 
 
@@ -707,6 +1073,129 @@ async def save_qa_data(request: Request, folder: str, category: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.post("/api/qa-regenerate")
+async def regenerate_qa(request: Request):
+    """Regenerate QA JSON files for a given results folder using updated captions and custom questions."""
+    try:
+        body = await request.json()
+        folder = body.get("folder", "")
+        captions = body.get("captions")
+        example_questions = body.get("example_questions")
+        qa_categories = body.get("qa_categories", "")
+        
+        # Parse VLM configuration details from request body
+        vlm_model = body.get("vlm_model", "none")
+        gemini_api_key = body.get("gemini_api_key")
+        vlm_api_url = body.get("vlm_api_url")
+        vlm_api_key = body.get("vlm_api_key")
+        vlm_model_id = body.get("vlm_model_id")
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+    if not folder:
+        return JSONResponse(status_code=400, content={"error": "Folder parameter is required"})
+
+    if not folder.startswith("results_"):
+        return JSONResponse(status_code=400, content={"error": "Invalid folder name"})
+
+    # Sanitise folder name to prevent path traversal
+    safe_folder = os.path.basename(folder)
+    run_path = os.path.normpath(os.path.join(output_dir, safe_folder))
+    if not run_path.startswith(os.path.normpath(output_dir)):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    if not os.path.isdir(run_path):
+        return JSONResponse(status_code=404, content={"error": "Folder not found"})
+
+    # Find the analysis JSON file
+    json_file = None
+    for fname in os.listdir(run_path):
+        if fname.endswith(".json") and "_qa_" not in fname:
+            json_file = os.path.join(run_path, fname)
+            break
+
+    if not json_file:
+        return JSONResponse(status_code=404, content={"error": "No analysis JSON found in output directory"})
+
+    try:
+        with open(json_file, "r", encoding="utf-8") as f:
+            report_data = py_json.load(f)
+
+        meta = report_data.get("metadata", {})
+        objects = report_data.get("objects", [])
+
+        filename = meta.get("video_file", "video.mp4")
+        duration = meta.get("duration_seconds", 0.0)
+
+        # Build processed_frames from objects' bbox_observations
+        from core.qa_generator import QAGenerator, parse_timestamp_to_seconds
+        from utils.report_generator import save_qa_report
+
+        frames_by_timestamp = {}
+        for obj in objects:
+            obj_type = obj.get("object_type", "unknown")
+            for obs in obj.get("bbox_observations", []):
+                ts_str = obs.get("timestamp", "00:00:00")
+                ts_sec = parse_timestamp_to_seconds(ts_str)
+
+                if ts_sec not in frames_by_timestamp:
+                    frames_by_timestamp[ts_sec] = []
+
+                frames_by_timestamp[ts_sec].append({
+                    "label": obj_type,
+                    "box": [obs.get("x1", 0.0), obs.get("y1", 0.0), obs.get("x2", 0.0), obs.get("y2", 0.0)],
+                    "score": obs.get("confidence", 1.0)
+                })
+
+        # Convert to sorted processed_frames
+        processed_frames = []
+        for idx, ts in enumerate(sorted(frames_by_timestamp.keys())):
+            processed_frames.append({
+                "frame_idx": idx,
+                "timestamp": ts,
+                "detections": frames_by_timestamp[ts],
+                "blur_var": 200.0,  # default
+                "brightness": 128.0  # default
+            })
+
+        qa_cats = [c.strip() for c in qa_categories.split(',')] if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
+        if captions or example_questions:
+            if "user_queries" not in qa_cats:
+                qa_cats.append("user_queries")
+
+        qa_generator = QAGenerator(
+            filename,
+            processed_frames,
+            duration,
+            qa_categories=qa_cats,
+            captions=captions,
+            example_questions=example_questions,
+            gemini_api_key=gemini_api_key,
+            custom_vlm_url=vlm_api_url,
+            custom_vlm_key=vlm_api_key,
+            custom_vlm_model_id=vlm_model_id,
+        )
+        qa_by_category = qa_generator.generate_qa_pairs()
+
+        base_name = os.path.splitext(filename)[0]
+
+        # Clean existing QA files
+        for fname in os.listdir(run_path):
+            if fname.endswith(".json") and "_qa_" in fname:
+                try:
+                    os.remove(os.path.join(run_path, fname))
+                except Exception:
+                    pass
+
+        out_qa_paths = save_qa_report(run_path, base_name, qa_by_category)
+
+        return {
+            "status": "success",
+            "qa_json_files": [f"/output/{safe_folder}/{os.path.basename(p)}" for p in out_qa_paths]
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"QA regeneration failed: {str(e)}"})
+
+
 @app.get("/api/stream-video")
 async def stream_video(request: Request, path: str):
     """Stream a video file with Range header support for browser playback.
@@ -802,6 +1291,127 @@ async def stream_video(request: Request, path: str):
                 "Content-Length": str(file_size),
             },
         )
+
+
+
+def perform_track_fusion(runs, cls):
+    intervals = []
+    for run in runs:
+        json_file_path = run.get("files", {}).get("json")
+        if not json_file_path:
+            continue
+        relative = json_file_path.lstrip("/")
+        if relative.startswith("output/"):
+            file_subpath = relative[len("output/"):]
+            abs_path = os.path.join(output_dir, file_subpath)
+            if os.path.isfile(abs_path):
+                try:
+                    with open(abs_path, "r", encoding="utf-8") as f:
+                        data = py_json.load(f)
+                        for obj in data.get("objects", []):
+                            if obj.get("object_type") == cls:
+                                from utils.time_utils import timestamp_to_seconds
+                                start_t = timestamp_to_seconds(obj.get("first_time_seen", "00:00:00"))
+                                duration_t = timestamp_to_seconds(obj.get("total_screen_time", "00:00:00"))
+                                intervals.append((start_t, start_t + duration_t))
+                except Exception:
+                    pass
+    if not intervals:
+        return 0
+    intervals.sort(key=lambda x: x[0])
+    merged = [intervals[0]]
+    for current in intervals[1:]:
+        prev = merged[-1]
+        if current[0] <= prev[1] + 1.0:
+            merged[-1] = (prev[0], max(prev[1], current[1]))
+        else:
+            merged.append(current)
+    return len(merged)
+
+@app.get("/api/video-comparison")
+async def video_comparison(video_name: str, consensus_method: str = "average"):
+    if not os.path.exists(output_dir):
+        return JSONResponse(status_code=404, content={"error": "Output directory not found"})
+        
+    folders = [f for f in os.listdir(output_dir)
+               if f.startswith(f"results_{video_name}_") and os.path.isdir(os.path.join(output_dir, f))]
+               
+    if not folders:
+        return JSONResponse(status_code=404, content={"error": f"No analysis runs found for video: {video_name}"})
+        
+    runs_data = []
+    for f in folders:
+        entry = _parse_run_folder(f)
+        if entry:
+            runs_data.append(entry)
+            
+    runs_data.sort(key=lambda x: x.get("run_date") or "", reverse=True)
+    
+    all_classes = set()
+    for run in runs_data:
+        all_classes.update(run.get("object_counts", {}).keys())
+        
+    consensus_counts = {}
+    for cls in all_classes:
+        counts = []
+        for run in runs_data:
+            counts.append(run.get("object_counts", {}).get(cls, 0))
+            
+        if consensus_method == "average":
+            consensus_counts[cls] = round(sum(counts) / len(runs_data)) if runs_data else 0
+        elif consensus_method == "median":
+            sorted_c = sorted(counts)
+            mid = len(sorted_c) // 2
+            if len(sorted_c) % 2 == 0:
+                consensus_counts[cls] = round((sorted_c[mid - 1] + sorted_c[mid]) / 2)
+            else:
+                consensus_counts[cls] = sorted_c[mid]
+        elif consensus_method == "maximum":
+            consensus_counts[cls] = max(counts)
+        elif consensus_method == "minimum":
+            consensus_counts[cls] = min(counts)
+        elif consensus_method == "track_fusion":
+            consensus_counts[cls] = perform_track_fusion(runs_data, cls)
+            
+    verified_file = os.path.join(output_dir, f"verified_{video_name}", "verified_report.json")
+    verified_data = None
+    if os.path.isfile(verified_file):
+        try:
+            with open(verified_file, "r", encoding="utf-8") as vf:
+                verified_data = py_json.load(vf)
+        except Exception:
+            pass
+            
+    return {
+        "video_name": video_name,
+        "runs": runs_data,
+        "consensus_counts": consensus_counts,
+        "verified_data": verified_data
+    }
+
+@app.post("/api/save-verified")
+async def save_verified(request: Request):
+    try:
+        body = await request.json()
+        video_name = body.get("video_name")
+        if not video_name:
+            return JSONResponse(status_code=400, content={"error": "video_name is required"})
+            
+        verified_dir = os.path.join(output_dir, f"verified_{video_name}")
+        os.makedirs(verified_dir, exist_ok=True)
+        
+        verified_file = os.path.join(verified_dir, "verified_report.json")
+        with open(verified_file, "w", encoding="utf-8") as f:
+            py_json.dump({
+                "video_name": video_name,
+                "verified_counts": body.get("verified_counts", {}),
+                "verified_qa": body.get("verified_qa", []),
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
+            }, f, indent=2, ensure_ascii=False)
+            
+        return {"status": "success", "message": f"Verified report saved for {video_name}"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 if __name__ == "__main__":

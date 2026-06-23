@@ -21,7 +21,7 @@ from utils.overlay_renderer import draw_overlays
 from utils.report_generator import get_video_report_path, write_json_report, write_video_report, save_qa_report
 from utils.time_utils import seconds_to_timestamp
 from core.qa_generator import QAGenerator
-from core.tracking import SimpleTracker
+from core.tracking import SimpleTracker, merge_tracked_objects
 from PIL import Image
 
 
@@ -46,6 +46,10 @@ class VideoProcessor:
         generate_video: bool = True,
         captions: str = None,
         example_questions: str = None,
+        gemini_api_key: str = None,
+        custom_vlm_url: str = None,
+        custom_vlm_key: str = None,
+        custom_vlm_model_id: str = None,
     ) -> None:
         """Processes the video with object detection/tracking and writes reports."""
 
@@ -201,6 +205,9 @@ class VideoProcessor:
             except Exception as e:
                 print(f"[-] Error copying original video: {e}")
 
+        # Run track-merging post-processor to fix double counting
+        tracked_objects = merge_tracked_objects(tracked_objects)
+
         out_csv_path = write_video_report(out_csv_path, tracked_objects)
         if write_json:
             write_json_report(
@@ -228,7 +235,11 @@ class VideoProcessor:
                 duration, 
                 qa_categories=qa_cats,
                 captions=captions,
-                example_questions=example_questions
+                example_questions=example_questions,
+                gemini_api_key=gemini_api_key,
+                custom_vlm_url=custom_vlm_url,
+                custom_vlm_key=custom_vlm_key,
+                custom_vlm_model_id=custom_vlm_model_id
             )
             qa_by_category = qa_generator.generate_qa_pairs()
             out_qa_paths = save_qa_report(run_output_dir, base_name, qa_by_category)

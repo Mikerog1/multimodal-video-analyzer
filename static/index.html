@@ -57,18 +57,9 @@
             <div class="app-container">
                 <header>
                     <div class="logo">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M15 10L19.5528 7.72361C20.2177 7.39116 21 7.87465 21 8.61803V15.382C21 16.1253 20.2177 16.6088 19.5528 16.2764L15 14M4 6H14C15.1046 6 16 6.89543 16 8V16C16 17.1046 15.1046 18 14 18H4C2.89543 18 2 17.1046 2 16V8C2 6.89543 2.89543 6 4 6Z" stroke="url(#paint0_linear)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                            <defs>
-                                <linearGradient id="paint0_linear" x1="2" y1="6" x2="21" y2="18" gradientUnits="userSpaceOnUse">
-                                    <stop stop-color="#8B5CF6"/>
-                                    <stop offset="1" stop-color="#3B82F6"/>
-                                </linearGradient>
-                            </defs>
-                        </svg>
                         <h1>Multimodal Video Analyzer</h1>
                     </div>
-                    <p class="subtitle">AI-powered object detection and tracking</p>
+                    <p class="subtitle">Multi-model tracking, QA generation and validation</p>
                 </header>
 
                 <main>
@@ -135,15 +126,31 @@
                                 </button>
                                 <div class="advanced-settings-content" id="advanced-settings-content">
                                     <div class="parameters-grid">
+                                        <!-- Detection Model selection -->
                                         <div class="param-group">
                                             <div class="label-row">
-                                                <label for="model_type">Model Type</label>
-                                                <span class="info-tip" data-tooltip="Choose the object detection architecture. DETR uses a transformer-based approach, YOLO uses real-time optimized detection with built-in tracking."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                                                <label for="model_type">Select Model for Object Detection</label>
+                                                <span class="info-tip" data-tooltip="Choose the object detection architecture. DETR uses a transformer-based approach, YOLO uses real-time optimized detection with built-in tracking. You can also specify custom local paths or remote APIs."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
                                             </div>
                                             <select id="model_type" name="model_type">
                                                 <option value="detr">DETR (ResNet-50)</option>
-                                                <option value="yolo">YOLO</option>
+                                                <option value="yolo" selected>YOLO (Local Detector)</option>
+                                                <option value="all">Run All Available Detectors (Ensemble)</option>
+                                                <option value="custom_local">Custom Local Model / Hugging Face ID</option>
+                                                <option value="custom_api">Custom Cloud Detector API</option>
                                             </select>
+                                        </div>
+
+                                        <div class="param-group hidden" id="detector_custom_local_group">
+                                            <label for="custom_detector_id">Detector Model Path / Repository ID</label>
+                                            <input type="text" id="custom_detector_id" name="custom_detector_id" placeholder="e.g. facebook/detr-resnet-101 or models/yolo.pt">
+                                        </div>
+
+                                        <div class="param-group hidden" id="detector_custom_api_group">
+                                            <label for="detector_api_url">Detector API Endpoint URL</label>
+                                            <input type="text" id="detector_api_url" name="detector_api_url" placeholder="https://api.example.com/detect">
+                                            <label for="detector_api_key" style="margin-top: 0.5rem;">Detector API Key</label>
+                                            <input type="password" id="detector_api_key" name="detector_api_key" placeholder="API Key">
                                         </div>
 
                                         <div class="param-group" id="model_id_group">
@@ -152,7 +159,12 @@
                                                 <span class="info-tip" data-tooltip="YOLO model size. Nano is fastest but least accurate. Large/Extra Large are most accurate but slower and require more memory."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
                                             </div>
                                             <select id="model_id_select" name="model_id">
-                                                <option value="yolov8n.pt">YOLOv8 Nano (yolov8n.pt)</option>
+                                                <option value="yolo26n.pt">YOLO26 Nano (yolo26n.pt)</option>
+                                                <option value="yolo26s.pt">YOLO26 Small (yolo26s.pt)</option>
+                                                <option value="yolo26m.pt">YOLO26 Medium (yolo26m.pt)</option>
+                                                <option value="yolo26l.pt">YOLO26 Large (yolo26l.pt)</option>
+                                                <option value="yolo26x.pt">YOLO26 Extra Large (yolo26x.pt)</option>
+                                                <option value="yolov8n.pt" selected>YOLOv8 Nano (yolov8n.pt)</option>
                                                 <option value="yolov8s.pt">YOLOv8 Small (yolov8s.pt)</option>
                                                 <option value="yolov8m.pt">YOLOv8 Medium (yolov8m.pt)</option>
                                                 <option value="yolov8l.pt">YOLOv8 Large (yolov8l.pt)</option>
@@ -160,6 +172,35 @@
                                             </select>
                                         </div>
 
+                                        <!-- VLM Context / QA selection -->
+                                        <div class="param-group">
+                                            <div class="label-row">
+                                                <label for="vlm_model">Select Model for Context and QA Generation</label>
+                                                <span class="info-tip" data-tooltip="Select the Vision-Language Model (VLM) used for automatic video description and advanced question-answering."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                                            </div>
+                                            <select id="vlm_model" name="vlm_model">
+                                                <option value="none" selected>None (Rule-based QA only)</option>
+                                                <option value="qwen">Qwen2-VL (Local VLM)</option>
+                                                <option value="gemini">Google Gemini VLM (Cloud API)</option>
+                                                <option value="custom_vlm">Custom VLM API (OpenAI-compatible)</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="param-group hidden" id="vlm_gemini_group">
+                                            <label for="gemini_api_key">Gemini API Key</label>
+                                            <input type="password" id="gemini_api_key" name="gemini_api_key" placeholder="AIzaSy...">
+                                        </div>
+
+                                        <div class="param-group hidden" id="vlm_custom_group">
+                                            <label for="vlm_api_url">VLM API Endpoint URL</label>
+                                            <input type="text" id="vlm_api_url" name="vlm_api_url" placeholder="e.g. https://api.openai.com/v1">
+                                            <label for="vlm_api_key" style="margin-top: 0.5rem;">VLM API Key</label>
+                                            <input type="password" id="vlm_api_key" name="vlm_api_key" placeholder="API Key">
+                                            <label for="vlm_model_id" style="margin-top: 0.5rem;">VLM Model ID</label>
+                                            <input type="text" id="vlm_model_id" name="vlm_model_id" placeholder="e.g. gpt-4o or llava-1.5">
+                                        </div>
+
+                                        <!-- Other settings -->
                                         <div class="param-group">
                                             <div class="label-row">
                                                 <label for="device">Device</label>
@@ -248,6 +289,7 @@
                                 </button>
                                 <div class="guidance-settings-content" id="guidance-settings-content">
                                     <div class="guidance-grid">
+
                                         <div class="param-group full-width">
                                             <div class="label-row">
                                                 <label for="captions">Video Description / Captions</label>
@@ -396,10 +438,29 @@
                                     </div>
                                 </div>
 
-                                <div class="output-section qa-output-section hidden" id="qa-output-section">
-                                    <p class="output-section-label">QA Pair Downloads</p>
-                                    <div class="download-links" id="qa-downloads-container"></div>
-                                </div>
+                                 <div class="output-section qa-output-section hidden" id="qa-output-section">
+                                     <p class="output-section-label">QA Pair Downloads</p>
+                                     <div class="download-links" id="qa-downloads-container"></div>
+                                 </div>
+ 
+                                 <!-- QA Regeneration Section -->
+                                 <div class="output-section qa-regenerate-section hidden" id="qa-regenerate-section" style="margin-top: 1.5rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.5rem;">
+                                     <p class="output-section-label">Regenerate QA Pairs</p>
+                                     <div class="guidance-grid" style="margin-top: 0.75rem;">
+                                         <div class="param-group full-width">
+                                             <label for="regen_captions">Updated Video Description / Captions</label>
+                                             <textarea id="regen_captions" placeholder="Provide new captions..."></textarea>
+                                         </div>
+                                         <div class="param-group full-width">
+                                             <label for="regen_questions">Updated Predefined Questions (one per line)</label>
+                                             <textarea id="regen_questions" placeholder="Provide new custom questions..."></textarea>
+                                         </div>
+                                         <button type="button" id="regen-qa-btn" class="secondary-btn" style="margin-top: 0.5rem; width: fit-content; align-self: flex-start;">
+                                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                                             Regenerate QA Pairs
+                                         </button>
+                                     </div>
+                                 </div>
 
                                 <!-- QA Review Section -->
                                 <div class="qa-review-section hidden" id="qa-review-section">
@@ -432,6 +493,155 @@
 
                             </div>  
                         <button id="reset-btn" class="text-btn">Analyze another video</button>
+                    </div>
+
+                    <!-- Comparison Dashboard -->
+                    <div id="comparison-panel" class="glass-panel hidden comparison-panel">
+                        <h2>
+
+                            <span id="compare-video-title">Multi-Model Comparison Dashboard</span>
+                        </h2>
+
+                        <!-- Dashboard Control Bar: Consensus method & External Captions -->
+                        <div class="compare-controls">
+                            <div class="compare-control-group">
+                                <label for="consensus-method-select">Consensus Method:</label>
+                                <select id="consensus-method-select">
+                                    <option value="average" selected>Average</option>
+                                    <option value="median">Median</option>
+                                    <option value="maximum">Maximum (High Recall)</option>
+                                    <option value="minimum">Minimum (High Precision)</option>
+                                    <option value="track_fusion">Track Interval Fusion (Spatial-Temporal)</option>
+                                </select>
+                            </div>
+                            <div class="compare-control-group">
+                                <label for="compare-video-source">Video Source:</label>
+                                <select id="compare-video-source">
+                                    <!-- dynamically populated -->
+                                </select>
+                            </div>
+                            <div class="compare-control-group">
+                                <button type="button" id="run-all-models-btn" class="secondary-btn">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1 .12-13.46L23 10"></path></svg>
+                                    Run Missing Models
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Video Player and Timeline -->
+                        <div class="video-container" style="margin-bottom: 1.5rem;">
+                            <video id="compare-result-video" controls>
+                                Your browser does not support the video tag.
+                            </video>
+                            <div class="qa-timeline-bar" id="compare-qa-timeline-bar" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+                                <div class="qa-timeline-track" id="compare-qa-timeline-track"></div>
+                            </div>
+                        </div>
+
+
+                        
+                        <!-- External Captions Card -->
+                        <div class="external-captions-card">
+                            <div class="caption-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                <label for="compare-external-captions" style="margin-bottom: 0;">External Context / Description (Optional):</label>
+                                <div class="caption-file-upload-wrap">
+                                    <input type="file" id="compare-caption-file" accept=".json,.txt" class="hidden-file-input" style="display: none;">
+                                    <button type="button" class="secondary-btn mini-btn" id="compare-upload-caption-btn" style="padding: 0.35rem 0.75rem; font-size: 0.78rem; border-radius: 6px; gap: 0.35rem; display: flex; align-items: center;">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                            <polyline points="17 8 12 3 7 8"></polyline>
+                                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                                        </svg>
+                                        Upload JSON/TXT
+                                    </button>
+                                </div>
+                            </div>
+                            <textarea id="compare-external-captions" placeholder="Input external captions or upload a text/JSON file to regenerate QA pairs..."></textarea>
+                            <div class="compare-vlm-row" style="display: flex; gap: 1rem; margin-top: 0.75rem; align-items: center; flex-wrap: wrap;">
+                                <div class="compare-control-group" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0;">
+                                    <label for="compare-vlm-model" style="margin-bottom: 0; font-size: 0.8rem; color: var(--text-secondary);">LLM Model for QA:</label>
+                                    <select id="compare-vlm-model" style="padding: 0.4rem 0.6rem; font-size: 0.8rem; border-radius: 6px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff;">
+                                        <option value="none">None (Rule-based only)</option>
+                                        <option value="qwen">Qwen2-VL (Local VLM)</option>
+                                        <option value="gemini" selected>Google Gemini VLM (Cloud API)</option>
+                                        <option value="custom_vlm">Custom VLM API</option>
+                                    </select>
+                                </div>
+                                <div id="compare-gemini-key-wrap" class="compare-api-key-wrap" style="flex: 1; min-width: 250px; display: flex; align-items: center; gap: 0.5rem;">
+                                    <label for="compare-gemini-key" style="white-space: nowrap; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0;">Gemini API Key:</label>
+                                    <input type="password" id="compare-gemini-key" placeholder="AIzaSy... (reused if configured in settings)" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.8rem; border-radius: 6px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff;">
+                                </div>
+                                <div id="compare-custom-vlm-wrap" class="compare-api-key-wrap hidden" style="flex: 1; min-width: 250px; display: flex; align-items: center; gap: 0.5rem;">
+                                    <input type="text" id="compare-vlm-api-url" placeholder="VLM API URL" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.8rem; border-radius: 6px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff;">
+                                    <input type="password" id="compare-vlm-api-key" placeholder="VLM API Key" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.8rem; border-radius: 6px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff;">
+                                    <input type="text" id="compare-vlm-model-id" placeholder="Model ID (e.g. gpt-4o)" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.8rem; border-radius: 6px; background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff;">
+                                </div>
+                                <button type="button" id="compare-regenerate-qa-btn" class="secondary-btn">Regenerate QAs using LLM</button>
+                            </div>
+                        </div>
+
+                        <!-- Object Counts Comparison Section -->
+                        <div class="output-section">
+                            <div class="label-row" style="margin-bottom: 0.5rem;">
+                                <p class="output-section-label" style="margin-bottom: 0;">Detections & Consensus Comparison</p>
+                                <span class="info-tip" data-tooltip="Compare detection counts across all runs and see the calculated consensus. You can double-click or type in the 'Verified' field to manually override counts for 100% ground-truth accuracy."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                            </div>
+                            
+                            <!-- Counts comparison Table -->
+                            <div class="table-wrapper">
+                                <table class="comparison-table" id="comparison-table">
+                                    <thead>
+                                        <tr id="comparison-table-header">
+                                            <th>Object Class</th>
+                                            <th>Consensus Count</th>
+                                            <th>Verified Count</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="comparison-table-body">
+                                        <!-- Classes comparison injected dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Simple Bar Chart Container -->
+                            <div class="comparison-chart-container" id="comparison-chart-container">
+                                <!-- Dynamic CSS-based charts injected here -->
+                            </div>
+                        </div>
+
+                        <!-- Model-Generated QAs Section -->
+                        <div class="output-section" id="model-qa-section">
+                            <div class="label-row" style="margin-bottom: 0.5rem;">
+                                <p class="output-section-label" style="margin-bottom: 0;">Model-Generated QAs</p>
+                                <span class="info-tip" data-tooltip="Review generated questions and answers from all models side-by-side."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                            </div>
+                            <div id="model-qa-compare-container">
+                                <!-- Model QAs list side by side (injected here) -->
+                            </div>
+                        </div>
+
+                        <!-- Verified QAs Section -->
+                        <div class="output-section" id="verified-qa-section">
+                            <div class="label-row" style="margin-bottom: 0.5rem;">
+                                <p class="output-section-label" style="margin-bottom: 0;">Verified QAs</p>
+                                <span class="info-tip" data-tooltip="Edit, add, delete, and save the final ground-truth QA pairs."><svg class="info-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span>
+                            </div>
+                            <div id="verified-qa-container">
+                                <!-- Verified QA editor (injected here) -->
+                            </div>
+                        </div>
+
+                        <!-- Save Verified Controls -->
+                        <div class="verified-save-bar">
+                            <button type="button" id="save-verified-btn" class="primary-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                                Save
+                            </button>
+                        </div>
+
+                        <button id="compare-close-btn" class="text-btn">Return to New Analysis</button>
                     </div>
                     
                     <div id="error-panel" class="glass-panel hidden error-panel">
