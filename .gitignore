@@ -21,3 +21,6 @@ Thumbs.db
 .idea/
 tests/test_api_endpoints.py
 tests/test_track_merging.py
+
+# Model weights
+models/*.pt
