@@ -60,10 +60,12 @@ CLASS_SYNONYMS = {
 VEHICLE_CLASSES = ["car", "truck", "bus", "motorcycle", "bicycle"]
 
 def parse_timestamp_to_seconds(ts_str: str) -> float:
-    """Converts a timestamp string in HH:MM:SS or MM:SS to seconds."""
+    """Converts a timestamp string in HH:MM:SS:MS, HH:MM:SS, or MM:SS to seconds."""
     parts = ts_str.split(':')
     try:
-        if len(parts) == 3:
+        if len(parts) == 4:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) + int(parts[3]) / 1000.0
+        elif len(parts) == 3:
             return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
         elif len(parts) == 2:
             return int(parts[0]) * 60 + float(parts[1])
@@ -76,10 +78,12 @@ def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
 
 class QAGenerator:
-    def __init__(self, filename, processed_frames, duration, qa_categories=None, captions=None, example_questions=None, gemini_api_key=None, custom_vlm_url=None, custom_vlm_key=None, custom_vlm_model_id=None):
+    def __init__(self, filename, processed_frames, duration, tracked_objects=None, video_path=None, qa_categories=None, captions=None, example_questions=None, gemini_api_key=None, custom_vlm_url=None, custom_vlm_key=None, custom_vlm_model_id=None):
         self.filename = filename
         self.processed_frames = processed_frames
         self.duration = duration
+        self.tracked_objects = tracked_objects if tracked_objects is not None else {}
+        self.video_path = video_path
         self.qa_categories = qa_categories if qa_categories is not None else ["counting", "negative", "ambiguity", "day_night"]
         self.captions = captions
         self.example_questions = example_questions
@@ -90,124 +94,32 @@ class QAGenerator:
         
         self.file_lighting = parse_filename_lighting(filename)
 
-    def track_objects(self):
-        """Runs a lightweight tracker over the detections across frames."""
-        tracks = []
-        next_track_id = 0
-        active_tracks = []
-        
-        for frame in self.processed_frames:
-            timestamp = frame["timestamp"]
-            frame_idx = frame["frame_idx"]
-            detections = frame["detections"]
-            
-            active_tracks = [t for t in active_tracks if timestamp - t["last_seen_time"] <= 3.0]
-            
-            matched_detections = set()
-            matched_tracks = set()
-            
-            # Phase 1: Match using IoU
-            for track in active_tracks:
-                best_iou = 0.0
-                best_det_idx = -1
-                
-                for idx, det in enumerate(detections):
-                    if idx in matched_detections:
-                        continue
-                    if det["label"] != track["label"]:
-                        continue
-                    
-                    iou = calculate_iou(track["last_box"], det["box"])
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_det_idx = idx
-                
-                if best_iou >= 0.1 and best_det_idx != -1:
-                    matched_detections.add(best_det_idx)
-                    track["last_box"] = detections[best_det_idx]["box"]
-                    track["last_seen_time"] = timestamp
-                    track["seen_frames"].append(frame_idx)
-                    track["boxes"].append((frame_idx, timestamp, detections[best_det_idx]["box"]))
-                    matched_tracks.add(track["id"])
-            
-            # Phase 2: Match remaining tracks using proximity/distance
-            for track in active_tracks:
-                if track["id"] in matched_tracks:
-                    continue
-                
-                best_dist = float('inf')
-                best_det_idx = -1
-                
-                track_center = [
-                    (track["last_box"][0] + track["last_box"][2]) / 2,
-                    (track["last_box"][1] + track["last_box"][3]) / 2
-                ]
-                
-                for idx, det in enumerate(detections):
-                    if idx in matched_detections:
-                        continue
-                    if det["label"] != track["label"]:
-                        continue
-                    
-                    det_center = [
-                        (det["box"][0] + det["box"][2]) / 2,
-                        (det["box"][1] + det["box"][3]) / 2
-                    ]
-                    
-                    dist = ((track_center[0] - det_center[0])**2 + (track_center[1] - det_center[1])**2)**0.5
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_det_idx = idx
-                
-                if best_det_idx != -1 and best_dist < 250:
-                    matched_detections.add(best_det_idx)
-                    track["last_box"] = detections[best_det_idx]["box"]
-                    track["last_seen_time"] = timestamp
-                    track["seen_frames"].append(frame_idx)
-                    track["boxes"].append((frame_idx, timestamp, detections[best_det_idx]["box"]))
-                    matched_tracks.add(track["id"])
-            
-            # Phase 3: Instantiate new tracks
-            for idx, det in enumerate(detections):
-                if idx in matched_detections:
-                    continue
-                
-                new_track = {
-                    "id": next_track_id,
-                    "label": det["label"],
-                    "last_box": det["box"],
-                    "first_seen_time": timestamp,
-                    "last_seen_time": timestamp,
-                    "seen_frames": [frame_idx],
-                    "boxes": [(frame_idx, timestamp, det["box"])]
-                }
-                next_track_id += 1
-                tracks.append(new_track)
-                active_tracks.append(new_track)
-                
-        return tracks
-
-    def generate_qa_pairs(self):
-        """Generates QA pairs. Fallback to Custom VLM or Gemini if credentials are available."""
-        if self.custom_vlm_url:
-            try:
-                return self.generate_with_custom_vlm()
-            except Exception as e:
-                print(f"[-] Custom VLM QA generation failed: {e}. Trying Gemini or falling back to rule-based.")
-                
-        if self.gemini_api_key:
-            try:
-                return self.generate_with_gemini()
-            except Exception as e:
-                print(f"[-] Gemini QA generation failed: {e}. Falling back to rule-based.")
-        
-        return self.generate_rule_based()
-
     def generate_rule_based(self):
         """Generates high-quality enhanced rule-based QA pairs."""
-        tracks = self.track_objects()
+        from core.counting import count_unique_tracks, aggregate_video_stats
+        
         qa_by_category = {cat: [] for cat in self.qa_categories}
         
+        # Check caption for keywords to customize rule-based questions
+        caption_lower = self.captions.lower() if self.captions else ""
+        env_ref = "in the video"
+        if "highway" in caption_lower or "motorway" in caption_lower or "autobahn" in caption_lower:
+            env_ref = "on the highway"
+        elif "intersection" in caption_lower:
+            env_ref = "at the intersection"
+        elif "city" in caption_lower or "town" in caption_lower:
+            env_ref = "on the city street"
+        elif "tunnel" in caption_lower:
+            env_ref = "in the tunnel"
+            
+        weather_ref = ""
+        if "rain" in caption_lower or "wet" in caption_lower:
+            weather_ref = "rainy "
+        elif "fog" in caption_lower or "mist" in caption_lower:
+            weather_ref = "foggy "
+        elif "snow" in caption_lower:
+            weather_ref = "snowy "
+            
         # Segment the video into 10-second intervals
         segment_duration = 10.0
         segments = []
@@ -223,9 +135,9 @@ class QAGenerator:
             
         # Determine maximum x-coordinate to estimate frame width
         max_x = 1280.0
-        for track in tracks:
-            for _, _, box in track["boxes"]:
-                max_x = max(max_x, box[2])
+        for track in self.tracked_objects.values():
+            for obs in track.bbox_observations:
+                max_x = max(max_x, obs.x2)
         
         for t_start, t_end in segments:
             t_start_str = format_time(t_start)
@@ -243,31 +155,37 @@ class QAGenerator:
             day_night = "night" if (self.file_lighting == "night" or avg_brightness < 55.0) else "day"
             
             visibility = "blurred" if is_blurred else ("dark" if day_night == "night" else "clear")
-                
-            segment_tracks = []
-            for track in tracks:
-                track_boxes_in_seg = [b for b in track["boxes"] if t_start <= b[1] <= t_end]
-                if track_boxes_in_seg:
-                    segment_tracks.append((track, track_boxes_in_seg))
             
-            detected_labels = set(t[0]["label"] for t in segment_tracks)
+            # Determine detected labels in segment
+            detected_labels = set()
+            for track in self.tracked_objects.values():
+                for obs in track.bbox_observations:
+                    try:
+                        obs_time = parse_timestamp_to_seconds(obs.timestamp)
+                    except Exception:
+                        continue
+                    if t_start <= obs_time <= t_end:
+                        detected_labels.add(track.object_type)
+                        break
             
-            # Entity groups
-            pedestrians = [t for t in segment_tracks if t[0]["label"] == "person"]
-            vehicles = [t for t in segment_tracks if t[0]["label"] in VEHICLE_CLASSES]
-            dogs = [t for t in segment_tracks if t[0]["label"] == "dog"]
+            # Calculate counts using central count function
+            ped_count_res = count_unique_tracks(self.tracked_objects, ["person"], t_start, t_end)
+            num_pedestrians = ped_count_res["count"]
             
-            num_pedestrians = len(pedestrians)
-            num_vehicles = len(vehicles)
-            num_dogs = len(dogs)
+            veh_count_res = count_unique_tracks(self.tracked_objects, VEHICLE_CLASSES, t_start, t_end)
+            num_vehicles = veh_count_res["count"]
+            
+            dog_count_res = count_unique_tracks(self.tracked_objects, ["dog"], t_start, t_end)
+            num_dogs = dog_count_res["count"]
             
             # --- 1. Counting QA ---
             if "counting" in self.qa_categories:
                 if num_pedestrians > 0:
                     difficulty = "hard" if is_blurred or num_pedestrians >= 4 else ("medium" if num_pedestrians >= 2 else "easy")
+                    expected_ans = f"at least {num_pedestrians}" if ped_count_res["confidence_signal"] == "low" else str(num_pedestrians)
                     qa_by_category["counting"].append({
-                        "Question": f"How many pedestrians are visible in the video segment from {t_start_str} to {t_end_str}?",
-                        "Answer": str(num_pedestrians),
+                        "Question": f"How many pedestrians are visible {env_ref} in the video segment from {t_start_str} to {t_end_str}?",
+                        "Answer": expected_ans,
                         "Answer format": "open-ended",
                         "Evidence spans the video": span_str,
                         "Reasoning type": "counting",
@@ -275,14 +193,21 @@ class QAGenerator:
                         "Visibility quality": visibility,
                         "Day or night tag": day_night,
                         "Trajectory linkage": None,
-                        "Unanswerable flag": False
+                        "Unanswerable flag": False,
+                        "_target_class": "person",
+                        "_segment_start_s": t_start,
+                        "_segment_end_s": t_end,
+                        "_track_ids_counted": ped_count_res["track_ids"],
+                        "_confidence_signal": ped_count_res["confidence_signal"],
+                        "_verification_status": "flagged_for_review" if ped_count_res["confidence_signal"] == "low" else "auto_verified"
                     })
                     
                 if num_vehicles > 0:
                     difficulty = "hard" if is_blurred or num_vehicles >= 5 else ("medium" if num_vehicles >= 2 else "easy")
+                    expected_ans = f"at least {num_vehicles}" if veh_count_res["confidence_signal"] == "low" else str(num_vehicles)
                     qa_by_category["counting"].append({
-                        "Question": f"How many vehicles are visible in the video segment from {t_start_str} to {t_end_str}?",
-                        "Answer": str(num_vehicles),
+                        "Question": f"How many vehicles are visible {env_ref} in the video segment from {t_start_str} to {t_end_str}?",
+                        "Answer": expected_ans,
                         "Answer format": "open-ended",
                         "Evidence spans the video": span_str,
                         "Reasoning type": "counting",
@@ -290,7 +215,13 @@ class QAGenerator:
                         "Visibility quality": visibility,
                         "Day or night tag": day_night,
                         "Trajectory linkage": None,
-                        "Unanswerable flag": False
+                        "Unanswerable flag": False,
+                        "_target_class": "vehicle",
+                        "_segment_start_s": t_start,
+                        "_segment_end_s": t_end,
+                        "_track_ids_counted": veh_count_res["track_ids"],
+                        "_confidence_signal": veh_count_res["confidence_signal"],
+                        "_verification_status": "flagged_for_review" if veh_count_res["confidence_signal"] == "low" else "auto_verified"
                     })
 
             # --- 2. Negative / Absence QA ---
@@ -319,7 +250,7 @@ class QAGenerator:
                     seed_idx = int(t_start * 100) % len(absent_candidates)
                     selected_absent = absent_candidates[seed_idx]
                     qa_by_category["negative"].append({
-                        "Question": f"Is there any {selected_absent} present in the video segment from {t_start_str} to {t_end_str}?",
+                        "Question": f"Is there any {selected_absent} present {env_ref} in the video segment from {t_start_str} to {t_end_str}?",
                         "Answer": "no",
                         "Answer format": "yes-no",
                         "Evidence spans the video": span_str,
@@ -334,14 +265,29 @@ class QAGenerator:
             # --- 3. Spatial-Temporal QA ---
             if "ambiguity" in self.qa_categories or "spatial-temporal" in self.qa_categories:
                 # 3a. Spatial Position Query (Screen side)
-                for group, name in [(pedestrians, "pedestrian"), (vehicles, "vehicle")]:
-                    if len(group) == 1:
-                        track_data, boxes = group[0]
-                        avg_x = sum((b[2][0] + b[2][2]) / 2 for b in boxes) / len(boxes)
+                for cls_name, display_name in [("person", "pedestrian"), ("car", "vehicle"), ("truck", "vehicle")]:
+                    matching_tracks = [t for t in self.tracked_objects.values() if t.object_type == cls_name]
+                    # Filter active in segment
+                    seg_tracks = []
+                    for t in matching_tracks:
+                        obs_in_seg = []
+                        for obs in t.bbox_observations:
+                            try:
+                                obs_time = parse_timestamp_to_seconds(obs.timestamp)
+                            except Exception:
+                                continue
+                            if t_start <= obs_time <= t_end:
+                                obs_in_seg.append(obs)
+                        if obs_in_seg:
+                            seg_tracks.append((t, obs_in_seg))
+                            
+                    if len(seg_tracks) == 1:
+                        track, boxes = seg_tracks[0]
+                        avg_x = sum((b.x1 + b.x2) / 2 for b in boxes) / len(boxes)
                         side = "left side" if avg_x < (max_x * 0.4) else ("right side" if avg_x > (max_x * 0.6) else "middle")
                         
                         qa_by_category["ambiguity"].append({
-                            "Question": f"On which side of the screen is the {name} visible in the segment from {t_start_str} to {t_end_str}?",
+                            "Question": f"On which side of the screen is the {display_name} visible {env_ref} in the segment from {t_start_str} to {t_end_str}?",
                             "Answer": side,
                             "Answer format": "open-ended",
                             "Evidence spans the video": span_str,
@@ -354,31 +300,12 @@ class QAGenerator:
                         })
                         break
 
-                # 3b. Temporal Order Query (First Appearance)
-                if len(segment_tracks) >= 2:
-                    sorted_tracks = sorted(segment_tracks, key=lambda x: x[0]["first_seen_time"])
-                    first_label = sorted_tracks[0][0]["label"]
-                    second_label = sorted_tracks[1][0]["label"]
-                    if first_label != second_label:
-                        qa_by_category["ambiguity"].append({
-                            "Question": f"Which appears first in the segment {t_start_str} - {t_end_str}: a {first_label} or a {second_label}?",
-                            "Answer": f"a {first_label}",
-                            "Answer format": "open-ended",
-                            "Evidence spans the video": span_str,
-                            "Reasoning type": "spatial-temporal",
-                            "Difficulty level": "medium",
-                            "Visibility quality": visibility,
-                            "Day or night tag": day_night,
-                            "Trajectory linkage": None,
-                            "Unanswerable flag": False
-                        })
-
             # --- 4. Day vs. Night Robustness QA ---
             if "day_night" in self.qa_categories:
                 if day_night == "night":
                     target_ref = "vehicle" if num_vehicles > 0 else ("pedestrian" if num_pedestrians > 0 else "road layout")
                     qa_by_category["day_night"].append({
-                        "Question": f"Is the {target_ref} clearly visible despite the low lighting in the night segment from {t_start_str} to {t_end_str}?",
+                        "Question": f"Is the {target_ref} clearly visible despite the {weather_ref}low lighting in the night segment from {t_start_str} to {t_end_str}?",
                         "Answer": "yes" if target_ref != "road layout" else "partially",
                         "Answer format": "yes-no" if target_ref != "road layout" else "open-ended",
                         "Evidence spans the video": span_str,
@@ -461,12 +388,9 @@ class QAGenerator:
                                 if cls == "traffic sign":
                                     requested_classes.append("stop sign")
                     
-                    count = 0
-                    for track in tracks:
-                        if track["label"] in requested_classes:
-                            track_boxes_in_seg = [b for b in track["boxes"] if start_time <= b[1] <= end_time]
-                            if track_boxes_in_seg:
-                                count += 1
+                    # Count using count_unique_tracks
+                    count_res = count_unique_tracks(self.tracked_objects, requested_classes, start_time, end_time)
+                    count = count_res["count"]
                     
                     is_yes_no = False
                     if any(w in q_lower for w in ["is there", "are there", "can you see", "do you see", "do we see", "present in"]):
@@ -507,16 +431,169 @@ class QAGenerator:
                         "Unanswerable flag": False
                     })
 
+        # --- 6. Video-wide Aggregate Statistics QA ---
+        if "counting" in self.qa_categories:
+            agg_stats = aggregate_video_stats(self.tracked_objects, self.duration)
+            
+            for cls, total in agg_stats.get("unique_total_per_class", {}).items():
+                if total > 0:
+                    qa_by_category["counting"].append({
+                        "Question": f"How many unique {cls}s appear in the entire video?",
+                        "Answer": str(total),
+                        "Answer format": "open-ended",
+                        "Evidence spans the video": f"0:00:00 - {format_time(self.duration)}",
+                        "Reasoning type": "counting",
+                        "Difficulty level": "medium",
+                        "Visibility quality": "clear",
+                        "Day or night tag": self.file_lighting if self.file_lighting else "day",
+                        "Trajectory linkage": None,
+                        "Unanswerable flag": False,
+                        "_target_class": cls,
+                        "_segment_start_s": 0.0,
+                        "_segment_end_s": self.duration,
+                        "_track_ids_counted": [tid for tid, t in self.tracked_objects.items() if t.object_type == cls],
+                        "_confidence_signal": "high",
+                        "_verification_status": "auto_verified"
+                    })
+                    
+            for cls, peak in agg_stats.get("peak_concurrent_per_class", {}).items():
+                if peak > 0:
+                    qa_by_category["counting"].append({
+                        "Question": f"What is the peak concurrent number of {cls}s visible at the same time in the video?",
+                        "Answer": str(peak),
+                        "Answer format": "open-ended",
+                        "Evidence spans the video": f"0:00:00 - {format_time(self.duration)}",
+                        "Reasoning type": "counting",
+                        "Difficulty level": "medium",
+                        "Visibility quality": "clear",
+                        "Day or night tag": self.file_lighting if self.file_lighting else "day",
+                        "Trajectory linkage": None,
+                        "Unanswerable flag": False,
+                        "_target_class": cls,
+                        "_segment_start_s": 0.0,
+                        "_segment_end_s": self.duration,
+                        "_track_ids_counted": [],
+                        "_confidence_signal": "high",
+                        "_verification_status": "auto_verified"
+                    })
+
+        # --- 7. Grounded segment captions (B1 - B4) ---
+        if "user_queries" in self.qa_categories:
+            from core.vlm_client import VLMClient
+            from core.verifier import verify_caption
+            import os
+            
+            # Instantiate VLM Client
+            backend_type = "none"
+            api_key = None
+            api_url = None
+            model_id = None
+            
+            if self.custom_vlm_url:
+                backend_type = "custom_vlm"
+                api_url = self.custom_vlm_url
+                api_key = self.custom_vlm_key
+                model_id = self.custom_vlm_model_id
+            elif self.gemini_api_key:
+                backend_type = "gemini"
+                api_key = self.gemini_api_key
+                
+            vlm_client = VLMClient(backend_type=backend_type, api_key=api_key, api_url=api_url, model_id=model_id)
+            
+            # Use a subdirectory keyframes in the video path folder or a temporary folder
+            if self.video_path:
+                keyframes_dir = os.path.join(os.path.dirname(self.video_path), "keyframes")
+            else:
+                keyframes_dir = os.path.join("output", "keyframes")
+                
+            for t_start, t_end in segments:
+                t_start_str = format_time(t_start)
+                t_end_str = format_time(t_end)
+                span_str = f"{t_start_str} - {t_end_str}"
+                
+                # Get verified counts for this segment
+                counts = {}
+                ped_res = count_unique_tracks(self.tracked_objects, ["person"], t_start, t_end)
+                if ped_res["count"] > 0:
+                    counts["person"] = ped_res["count"]
+                for cls in VEHICLE_CLASSES:
+                    cls_res = count_unique_tracks(self.tracked_objects, [cls], t_start, t_end)
+                    if cls_res["count"] > 0:
+                        counts[cls] = cls_res["count"]
+                        
+                # Extract frames
+                frame_paths = []
+                if self.video_path:
+                    try:
+                        frame_paths = extract_segment_keyframes(self.video_path, t_start, t_end, keyframes_dir)
+                    except Exception as e:
+                        print(f"[-] Frame extraction error for segment {span_str}: {e}")
+                        
+                # Set up prompt context
+                avg_brightness = 128.0
+                segment_frames = [f for f in self.processed_frames if t_start <= f["timestamp"] <= t_end]
+                if segment_frames:
+                    avg_brightness = sum(f.get("brightness", 128.0) for f in segment_frames) / len(segment_frames)
+                lighting = "night" if (self.file_lighting == "night" or avg_brightness < 55.0) else "day"
+                
+                context = {
+                    "verified_counts": counts,
+                    "lighting": lighting,
+                    "segment_range": span_str
+                }
+                
+                # Generate caption
+                try:
+                    caption_res = vlm_client.generate_caption(frame_paths, context)
+                except Exception as e:
+                    print(f"[-] Caption generation failed for segment {span_str}: {e}")
+                    caption_res = {
+                        "caption": f"A segment recorded during {lighting} showing: " + ", ".join(f"{v} {k}" for k, v in counts.items()),
+                        "claims": {"objects_mentioned": list(counts.keys()), "counts_mentioned": counts}
+                    }
+                    
+                # Cross-check and verify caption
+                verified_caption = verify_caption(caption_res, counts, vlm_client, frame_paths, context)
+                
+                # Add to QA pairs
+                qa_by_category["user_queries"].append({
+                    "Question": f"Describe what happens in the video segment from {t_start_str} to {t_end_str}.",
+                    "Answer": verified_caption.get("caption", ""),
+                    "Answer format": "open-ended",
+                    "Evidence spans the video": span_str,
+                    "Reasoning type": "summary-description",
+                    "Difficulty level": "medium",
+                    "Visibility quality": "clear" if lighting == "day" else "dark",
+                    "Day or night tag": lighting,
+                    "Trajectory linkage": None,
+                    "Unanswerable flag": False,
+                    "_verification_status": verified_caption.get("_verification_status", "auto_verified")
+                })
+
         return qa_by_category
+
+    def generate_qa_pairs(self):
+        """Generates QA pairs. Fallback to Custom VLM or Gemini if credentials are available."""
+        if self.custom_vlm_url:
+            try:
+                return self.generate_with_custom_vlm()
+            except Exception as e:
+                print(f"[-] Custom VLM QA generation failed: {e}. Trying Gemini or falling back to rule-based.")
+                
+        if self.gemini_api_key:
+            try:
+                return self.generate_with_gemini()
+            except Exception as e:
+                print(f"[-] Gemini QA generation failed: {e}. Falling back to rule-based.")
+        
+        return self.generate_rule_based()
 
     def generate_with_gemini(self):
         """Calls Google Gemini API to generate clean natural language QA pairs."""
-        tracks = self.track_objects()
-        
         # Summarize object tracking for prompt context
         summary_counts = {}
-        for track in tracks:
-            summary_counts[track["label"]] = summary_counts.get(track["label"], 0) + 1
+        for track in self.tracked_objects.values():
+            summary_counts[track.object_type] = summary_counts.get(track.object_type, 0) + 1
             
         prompt = f"""You are a precise annotation assistant for autonomous driving video datasets.
 You are given metadata and tracking results for a video.
@@ -592,10 +669,9 @@ Output ONLY the raw JSON array. Do not include markdown code block syntax.
 
     def generate_with_custom_vlm(self):
         """Calls OpenAI-compatible custom VLM API to generate clean natural language QA pairs."""
-        tracks = self.track_objects()
         summary_counts = {}
-        for track in tracks:
-            summary_counts[track["label"]] = summary_counts.get(track["label"], 0) + 1
+        for track in self.tracked_objects.values():
+            summary_counts[track.object_type] = summary_counts.get(track.object_type, 0) + 1
             
         prompt = f"""You are a precise annotation assistant for autonomous driving video datasets.
 You are given metadata and tracking results for a video.
@@ -677,4 +753,58 @@ Output ONLY the raw JSON array. Do not include markdown code block syntax.
             qa_by_category[target_cat].append(qa)
             
         return qa_by_category
+
+def extract_segment_keyframes(video_path: str, start_s: float, end_s: float, output_dir: str, max_keyframes: int = 3) -> list[str]:
+    """Extracts 2-3 frames from the video within [start_s, end_s] and saves them as JPEGs.
+    Returns a list of absolute paths to the saved JPEGs.
+    """
+    import cv2
+    import os
+    
+    if not video_path or not os.path.exists(video_path):
+        return []
+        
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return []
+        
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    if fps <= 0:
+        cap.release()
+        return []
+        
+    start_frame = int(start_s * fps)
+    end_frame = int(end_s * fps)
+    
+    # Bound check
+    start_frame = max(0, min(start_frame, total_frames - 1))
+    end_frame = max(0, min(end_frame, total_frames - 1))
+    
+    if end_frame <= start_frame:
+        cap.release()
+        return []
+        
+    step = max(1, (end_frame - start_frame) // max_keyframes)
+    frame_paths = []
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    for i in range(max_keyframes):
+        frame_idx = start_frame + i * step
+        if frame_idx > end_frame:
+            break
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        frame_name = f"frame_{start_s:.1f}_{end_s:.1f}_{i}.jpg"
+        frame_path = os.path.join(output_dir, frame_name)
+        cv2.imwrite(frame_path, frame)
+        frame_paths.append(frame_path)
+        
+    cap.release()
+    return frame_paths
 

@@ -222,6 +222,7 @@ class VideoProcessor:
                     duration,
                     fps_sample,
                     tracked_objects,
+                    captions,
                 ),
             )
 
@@ -229,10 +230,13 @@ class VideoProcessor:
         out_qa_paths = []
         if generate_qa:
             qa_cats = qa_categories if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
+            from core.verifier import verify_all_qa
             qa_generator = QAGenerator(
                 filename, 
                 processed_frames_data, 
                 duration, 
+                tracked_objects=tracked_objects,
+                video_path=video_path,
                 qa_categories=qa_cats,
                 captions=captions,
                 example_questions=example_questions,
@@ -242,6 +246,7 @@ class VideoProcessor:
                 custom_vlm_model_id=custom_vlm_model_id
             )
             qa_by_category = qa_generator.generate_qa_pairs()
+            qa_by_category = verify_all_qa(qa_by_category, tracked_objects)
             out_qa_paths = save_qa_report(run_output_dir, base_name, qa_by_category)
 
         display_video_path = out_video_path if generate_video else os.path.join(run_output_dir, f"{base_name}_original{os.path.splitext(video_path)[1] or '.mp4'}")
@@ -264,6 +269,7 @@ class VideoProcessor:
         duration: float,
         fps_sample: float,
         tracked_objects: dict,
+        captions: str = None,
     ) -> dict:
         return {
             "metadata": {
@@ -279,6 +285,7 @@ class VideoProcessor:
                 "confidence_threshold": getattr(self.detector, "confidence_threshold", 0.0),
                 "fps_sample": fps_sample,
                 "analysis_time_utc": time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime()),
+                "captions": captions,
             },
             "objects": [
                 {

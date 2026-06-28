@@ -428,18 +428,19 @@ def run_analysis(
 
         # Generate captions using selected VLM if requested or auto-generate is enabled
         if not captions or not captions.strip():
-            if vlm_model == "qwen" or auto_generate_captions:
-                tasks[task_id]["status"] = "generating_captions"
-                tasks[task_id]["progress"] = 0
-                captions = generate_captions_with_qwen(video_path)
-            elif vlm_model == "gemini" and gemini_api_key:
-                tasks[task_id]["status"] = "generating_captions"
-                tasks[task_id]["progress"] = 0
-                captions = generate_captions_with_gemini(video_path, gemini_api_key)
-            elif vlm_model == "custom_vlm" and vlm_api_url:
-                tasks[task_id]["status"] = "generating_captions"
-                tasks[task_id]["progress"] = 0
-                captions = generate_captions_with_custom_vlm(video_path, vlm_api_url, vlm_api_key, vlm_model_id)
+            if auto_generate_captions or vlm_model in ("qwen", "gemini", "custom_vlm"):
+                if vlm_model == "gemini" and gemini_api_key:
+                    tasks[task_id]["status"] = "generating_captions"
+                    tasks[task_id]["progress"] = 0
+                    captions = generate_captions_with_gemini(video_path, gemini_api_key)
+                elif vlm_model == "custom_vlm" and vlm_api_url:
+                    tasks[task_id]["status"] = "generating_captions"
+                    tasks[task_id]["progress"] = 0
+                    captions = generate_captions_with_custom_vlm(video_path, vlm_api_url, vlm_api_key, vlm_model_id)
+                else:
+                    tasks[task_id]["status"] = "generating_captions"
+                    tasks[task_id]["progress"] = 0
+                    captions = generate_captions_with_qwen(video_path)
 
         if model_type == "all":
             models_to_run = [
@@ -592,6 +593,13 @@ async def list_hf_videos(repo_id: str, token: str = None):
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
+def str_to_bool(val) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ("true", "1", "yes", "on")
+    return bool(val)
+
 @app.post("/api/analyze")
 async def analyze_video(
     file: UploadFile = File(None),
@@ -602,7 +610,7 @@ async def analyze_video(
     model_id: str = Form(""),
     device: str = Form("auto"),
     codec: str = Form("avc1"),
-    confidence: float = Form(0.7),
+    confidence: float = Form(0.4),
     fps_sample: float = Form(1.0),
     resize_factor: float = Form(1.0),
     save_sampled_only: bool = Form(False),
@@ -624,6 +632,14 @@ async def analyze_video(
     vlm_api_key: str = Form(None),
     vlm_model_id: str = Form(None),
 ):
+    save_sampled_only = str_to_bool(save_sampled_only)
+    generate_qa = str_to_bool(generate_qa)
+    generate_json = str_to_bool(generate_json)
+    remove_audio = str_to_bool(remove_audio)
+    mask_persons = str_to_bool(mask_persons)
+    generate_video = str_to_bool(generate_video)
+    auto_generate_captions = str_to_bool(auto_generate_captions)
+
     task_id = str(uuid.uuid4())
     
     filename = ""
@@ -780,6 +796,7 @@ async def get_results(video: str):
     model_info = None
     analysis_settings = None
     object_counts = {}
+    captions = None
     if json_file:
         try:
             with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
@@ -794,6 +811,7 @@ async def get_results(video: str):
                     "device": str(dev).upper()
                 }
                 analysis_settings = _extract_analysis_settings(meta)
+                captions = meta.get("captions")
                 for obj in report_data.get("objects", []):
                     obj_type = obj.get("object_type", "unknown")
                     object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
@@ -806,6 +824,7 @@ async def get_results(video: str):
         "model_info": model_info,
         "analysis_settings": analysis_settings,
         "object_counts": object_counts,
+        "captions": captions,
     }
 
 
@@ -859,6 +878,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
     model_info = None
     analysis_settings = None
     object_counts = {}
+    captions = None
     if json_file:
         try:
             with open(os.path.join(run_path, json_file), "r", encoding="utf-8") as jf:
@@ -873,6 +893,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
                     "device": str(dev).upper()
                 }
                 analysis_settings = _extract_analysis_settings(meta)
+                captions = meta.get("captions")
                 for obj in report_data.get("objects", []):
                     obj_type = obj.get("object_type", "unknown")
                     object_counts[obj_type] = object_counts.get(obj_type, 0) + 1
@@ -886,6 +907,7 @@ def _parse_run_folder(folder_name: str) -> dict | None:
         "model_info": model_info,
         "analysis_settings": analysis_settings,
         "object_counts": object_counts,
+        "captions": captions,
         "files": {
             "video": f"/output/{folder_name}/{video_file}" if video_file else None,
             "original_video": f"/output/{folder_name}/{original_video}" if original_video else None,
@@ -1157,15 +1179,65 @@ async def regenerate_qa(request: Request):
                 "brightness": 128.0  # default
             })
 
+        # Reconstruct tracked_objects from report_data
+        from core.tracking import TrackedObject, BBoxObservation
+        from utils.time_utils import timestamp_to_seconds
+        tracked_objects = {}
+        for obj in objects:
+            try:
+                obj_id = int(obj.get("object_id", 0))
+            except ValueError:
+                continue
+            obj_type = obj.get("object_type", "unknown")
+            try:
+                first_seen = timestamp_to_seconds(obj.get("first_time_seen", "00:00:00:000"))
+            except Exception:
+                first_seen = 0.0
+            try:
+                screen_time = timestamp_to_seconds(obj.get("total_screen_time", "00:00:00:000"))
+            except Exception:
+                screen_time = 0.0
+                
+            obs_list = []
+            for obs in obj.get("bbox_observations", []):
+                obs_list.append(
+                    BBoxObservation(
+                        timestamp=obs.get("timestamp", "00:00:00:000"),
+                        x1=float(obs.get("x1", 0.0)),
+                        y1=float(obs.get("y1", 0.0)),
+                        x2=float(obs.get("x2", 0.0)),
+                        y2=float(obs.get("y2", 0.0)),
+                        confidence=float(obs.get("confidence", 1.0))
+                    )
+                )
+            tracked_objects[obj_id] = TrackedObject(
+                object_type=obj_type,
+                first_time_seen_seconds=first_seen,
+                screen_time_seconds=screen_time,
+                bbox_observations=obs_list
+            )
+            
+        # Find local video path in run_path
+        files = os.listdir(run_path)
+        video_exts = ('.mp4', '.avi', '.mkv', '.webm', '.mov', '.MOV')
+        analyzed_video = next((f for f in files if f.endswith(video_exts) and '_analyzed' in f), None)
+        original_video = next((f for f in files if f.endswith(video_exts) and '_original' in f), None)
+        any_video = next((f for f in files if f.endswith(video_exts)), None) if not analyzed_video and not original_video else None
+        video_file = analyzed_video or original_video or any_video
+        video_path = os.path.join(run_path, video_file) if video_file else None
+
         qa_cats = [c.strip() for c in qa_categories.split(',')] if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
         if captions or example_questions:
             if "user_queries" not in qa_cats:
                 qa_cats.append("user_queries")
 
+        from core.verifier import verify_all_qa
         qa_generator = QAGenerator(
             filename,
             processed_frames,
             duration,
+            tracked_objects=tracked_objects,
+            video_path=video_path,
             qa_categories=qa_cats,
             captions=captions,
             example_questions=example_questions,
@@ -1175,6 +1247,7 @@ async def regenerate_qa(request: Request):
             custom_vlm_model_id=vlm_model_id,
         )
         qa_by_category = qa_generator.generate_qa_pairs()
+        qa_by_category = verify_all_qa(qa_by_category, tracked_objects)
 
         base_name = os.path.splitext(filename)[0]
 

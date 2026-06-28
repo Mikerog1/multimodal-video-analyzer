@@ -4,9 +4,27 @@ from datetime import timedelta
 
 # Color mappings for classes (BGR format)
 DEFAULT_COLORS = {
-    "person": (255, 255, 0),  # Cyan
-    "car": (75, 220, 75),     # Emerald Green
-    "dog": (0, 165, 255)      # Orange
+    "person": (255, 255, 0),      # Cyan
+    "car": (75, 220, 75),         # Emerald Green
+    "truck": (255, 100, 100),     # Soft Red
+    "bicycle": (100, 255, 255),   # Yellowish
+    "boat/ship": (255, 100, 255), # Magenta
+    "plane": (100, 100, 255),     # Blue
+    "dog": (0, 165, 255),         # Orange
+    "cat": (200, 200, 100),       # Olive
+    "bird": (100, 200, 200),      # Teal
+}
+
+DISPLAY_LABELS = {
+    "person": "People",
+    "car": "Cars",
+    "dog": "Dogs",
+    "truck": "Trucks",
+    "bicycle": "Bicycles",
+    "boat/ship": "Boats",
+    "plane": "Planes",
+    "cat": "Cats",
+    "bird": "Birds",
 }
 
 def draw_futuristic_box(img, x1, y1, x2, y2, color, label, score, line_thickness=2):
@@ -75,19 +93,28 @@ def draw_hud(img, counts, elapsed_time, total_time, model_name, device):
     text_y = 33
     start_x = 20
     
-    # People (Cyan)
-    cv2.circle(img, (start_x, text_y - 6), 5, (255, 255, 0), -1, lineType=cv2.LINE_AA)
-    cv2.putText(img, f"People: {counts.get('person', 0)}", (start_x + 12, text_y), font, 0.5, (220, 240, 255), 1, lineType=cv2.LINE_AA)
-    
-    # Cars (Green)
-    start_x += 130
-    cv2.circle(img, (start_x, text_y - 6), 5, (75, 220, 75), -1, lineType=cv2.LINE_AA)
-    cv2.putText(img, f"Cars: {counts.get('car', 0)}", (start_x + 12, text_y), font, 0.5, (220, 240, 255), 1, lineType=cv2.LINE_AA)
-    
-    # Dogs (Orange)
-    start_x += 110
-    cv2.circle(img, (start_x, text_y - 6), 5, (0, 165, 255), -1, lineType=cv2.LINE_AA)
-    cv2.putText(img, f"Dogs: {counts.get('dog', 0)}", (start_x + 12, text_y), font, 0.5, (220, 240, 255), 1, lineType=cv2.LINE_AA)
+    # We always display People, Cars, and Dogs (even if count is 0),
+    # and dynamically add other detected categories.
+    active_classes = ["person", "car", "dog"]
+    for cls in counts:
+        if cls not in active_classes and counts.get(cls, 0) > 0:
+            active_classes.append(cls)
+            
+    for cls in active_classes:
+        label = DISPLAY_LABELS.get(cls, cls.capitalize())
+        cnt = counts.get(cls, 0)
+        color = DEFAULT_COLORS.get(cls, (128, 128, 128))
+        
+        # Circle indicator
+        cv2.circle(img, (start_x, text_y - 6), 5, color, -1, lineType=cv2.LINE_AA)
+        
+        # Text
+        text = f"{label}: {cnt}"
+        cv2.putText(img, text, (start_x + 12, text_y), font, 0.5, (220, 240, 255), 1, lineType=cv2.LINE_AA)
+        
+        # Measure size to adjust start_x for next category
+        (tw_block, _), _ = cv2.getTextSize(text, font, 0.5, 1)
+        start_x += tw_block + 30
     
     # 2. Time & Progress in the Center/Right
     time_str = f"{str(timedelta(seconds=int(elapsed_time)))} / {str(timedelta(seconds=int(total_time)))}"
