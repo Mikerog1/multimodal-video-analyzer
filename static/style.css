@@ -2327,3 +2327,33 @@ video {
     border-radius: 12px;
     margin-top: -0.5rem;
 }
+
+/* ─── Disabled QA Category Labels ─── */
+.checkbox-label.qa-disabled-label {
+    opacity: 0.35;
+    cursor: not-allowed;
+    user-select: none;
+}
+
+.checkbox-label.qa-disabled-label input[type="checkbox"] {
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.checkbox-label.qa-disabled-label span::after {
+    content: " (coming soon)";
+    font-size: 0.7em;
+    color: var(--text-secondary);
+    margin-left: 0.25rem;
+}
+
+/* ─── Disabled QA Category Labels ─── */
+.qa-disabled-label {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.qa-disabled-label input[type="checkbox"] {
+    cursor: not-allowed;
+}

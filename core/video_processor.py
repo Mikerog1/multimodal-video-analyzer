@@ -19,7 +19,7 @@ from datetime import timedelta
 
 from utils.overlay_renderer import draw_overlays
 from utils.report_generator import get_video_report_path, write_json_report, write_video_report, save_qa_report
-from utils.time_utils import seconds_to_timestamp
+from utils.time_utils import seconds_to_timestamp, timestamp_to_seconds
 from core.qa_generator import QAGenerator
 from core.tracking import SimpleTracker, merge_tracked_objects
 from PIL import Image
@@ -45,11 +45,6 @@ class VideoProcessor:
         mask_persons: bool = False,
         generate_video: bool = True,
         captions: str = None,
-        example_questions: str = None,
-        gemini_api_key: str = None,
-        custom_vlm_url: str = None,
-        custom_vlm_key: str = None,
-        custom_vlm_model_id: str = None,
     ) -> None:
         """Processes the video with object detection/tracking and writes reports."""
 
@@ -229,7 +224,7 @@ class VideoProcessor:
         # Generate and save QA pairs
         out_qa_paths = []
         if generate_qa:
-            qa_cats = qa_categories if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
+            qa_cats = qa_categories if qa_categories else ["counting"]
             from core.verifier import verify_all_qa
             qa_generator = QAGenerator(
                 filename, 
@@ -239,11 +234,6 @@ class VideoProcessor:
                 video_path=video_path,
                 qa_categories=qa_cats,
                 captions=captions,
-                example_questions=example_questions,
-                gemini_api_key=gemini_api_key,
-                custom_vlm_url=custom_vlm_url,
-                custom_vlm_key=custom_vlm_key,
-                custom_vlm_model_id=custom_vlm_model_id
             )
             qa_by_category = qa_generator.generate_qa_pairs()
             qa_by_category = verify_all_qa(qa_by_category, tracked_objects)
@@ -271,6 +261,22 @@ class VideoProcessor:
         tracked_objects: dict,
         captions: str = None,
     ) -> dict:
+        # Build per-second timeline for detection charts
+        timeline = []
+        for sec in range(int(duration) + 1):
+            counts_at_sec = {}
+            for tid, track in tracked_objects.items():
+                for obs in track.bbox_observations:
+                    try:
+                        obs_time = timestamp_to_seconds(obs.timestamp)
+                    except Exception:
+                        continue
+                    if abs(obs_time - sec) <= 0.5:
+                        cls = track.object_type
+                        counts_at_sec[cls] = counts_at_sec.get(cls, 0) + 1
+                        break
+            timeline.append({"second": sec, **counts_at_sec})
+
         return {
             "metadata": {
                 "video_file": filename,
@@ -297,6 +303,7 @@ class VideoProcessor:
                 }
                 for object_id, tracked_object in sorted(tracked_objects.items())
             ],
+            "timeline": timeline,
         }
 
     def print_cli_summary(

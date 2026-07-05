@@ -754,8 +754,8 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Handle captions
             const captionsArea = document.getElementById('compare-external-captions');
-            if (data.verified_data && data.verified_data.verified_captions) {
-                captionsArea.value = data.verified_data.verified_captions;
+            if (data.verified_data && (data.verified_data.verified_captions || data.verified_data.ground_truth_context)) {
+                captionsArea.value = data.verified_data.verified_captions || data.verified_data.ground_truth_context;
             } else {
                 const firstWithCaption = data.runs.find(r => r.analysis_settings && r.analysis_settings.captions);
                 captionsArea.value = firstWithCaption ? firstWithCaption.analysis_settings.captions : '';
@@ -793,7 +793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tableHeader.appendChild(thConsensus);
         
         const thVerified = document.createElement('th');
-        thVerified.textContent = 'Verified (100% Accurate)';
+        thVerified.textContent = 'Ground Truth';
         tableHeader.appendChild(thVerified);
         
         // Listen to player button clicks
@@ -842,8 +842,10 @@ document.addEventListener('DOMContentLoaded', () => {
             tdConsensus.textContent = consensus;
             tr.appendChild(tdConsensus);
             
-            const verifiedVal = (data.verified_data && data.verified_data.verified_counts && data.verified_data.verified_counts[cls] !== undefined)
-                ? data.verified_data.verified_counts[cls]
+            const verifiedVal = (data.verified_data && 
+                ((data.verified_data.verified_counts && data.verified_data.verified_counts[cls] !== undefined) ||
+                 (data.verified_data.ground_truth_counts && data.verified_data.ground_truth_counts[cls] !== undefined)))
+                ? (data.verified_data.ground_truth_counts || data.verified_data.verified_counts)[cls]
                 : consensus;
             const tdVerified = document.createElement('td');
             tdVerified.innerHTML = `<input type="number" min="0" class="verified-count-input" data-class="${cls}" value="${verifiedVal}" style="width: 80px; text-align: center; border-radius: 6px; border: 1px solid rgba(255,255,255,0.15); background: rgba(15,23,42,0.6); color: #fff; padding: 0.3rem;">`;
@@ -1086,135 +1088,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 tabContent.appendChild(catPanel);
             });
         }
-        
         runsContainer.appendChild(tabHeader);
         runsContainer.appendChild(tabContent);
 
-        
-        const verifiedEditor = document.createElement('div');
-        verifiedEditor.className = 'qa-verified-editor';
-        
-        const editorList = document.createElement('div');
-        editorList.className = 'qa-verified-list';
-        editorList.id = 'qa-verified-list';
-        
-        let initialQAs = [];
-        if (data.verified_data && data.verified_data.verified_qa && data.verified_data.verified_qa.length > 0) {
-            initialQAs = data.verified_data.verified_qa;
-            renderVerifiedQAEditor(initialQAs, editorList);
-        } else {
-            const firstRun = runs[0];
-            if (firstRun) {
-                fetch(`/api/qa-data?folder=${encodeURIComponent(firstRun.folder)}`)
-                    .then(res => res.json())
-                    .then(qaData => {
-                        Object.values(qaData).forEach(list => {
-                            if (list && list.length > 0) {
-                                initialQAs.push(...list);
-                            }
-                        });
-                        renderVerifiedQAEditor(initialQAs, editorList);
-                    });
-            }
-        }
-        
-        verifiedEditor.appendChild(editorList);
-        
-        const addBtn = document.createElement('button');
-        addBtn.type = 'button';
-        addBtn.className = 'secondary-btn add-qa-row-btn';
-        addBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg> Add Custom QA Pair';
-        addBtn.style.marginTop = '1rem';
-        addBtn.addEventListener('click', () => {
-            const newItem = {
-                "Question": "",
-                "Answer": "",
-                "Evidence spans the video": `00:00:00 - 00:00:05`,
-                "Reasoning type": "counting",
-                "Difficulty level": "easy",
-                "Visibility quality": "clear",
-                "Day or night tag": "day",
-                "Unanswerable flag": false
-            };
-            addVerifiedQARow(newItem, editorList);
-        });
-        verifiedEditor.appendChild(addBtn);
-        
         if (modelContainer) modelContainer.appendChild(runsContainer);
-        if (verifiedContainer) verifiedContainer.appendChild(verifiedEditor);
     }
 
-    function renderVerifiedQAEditor(qas, container) {
-        container.innerHTML = '';
-        if (!qas || qas.length === 0) {
-            container.innerHTML = '<p class="empty-hint" style="color:var(--text-secondary);padding:1rem;">No QA pairs yet. Click Add to create one.</p>';
-            return;
-        }
-        qas.forEach(qa => addVerifiedQARow(qa, container));
-    }
-
-    function addVerifiedQARow(qa, container) {
-        const emptyHint = container.querySelector('.empty-hint');
-        if (emptyHint) emptyHint.remove();
-        
-        const row = document.createElement('div');
-        row.className = 'qa-verified-row-card';
-        
-        const qVal = qa.Question || '';
-        const aVal = qa.Answer || '';
-        const evVal = qa['Evidence spans the video'] || '00:00:00 - 00:00:00';
-        const reasonVal = qa['Reasoning type'] || 'counting';
-        const diffVal = qa['Difficulty level'] || 'easy';
-        
-        row.innerHTML = `
-            <div class="qa-verified-row-inputs">
-                <div class="qa-input-field">
-                    <label>Question</label>
-                    <input type="text" class="qa-edit-q" value="${qVal.replace(/"/g, '&quot;')}" placeholder="e.g. How many cars are visible?">
-                </div>
-                <div class="qa-input-field">
-                    <label>Answer</label>
-                    <input type="text" class="qa-edit-a" value="${aVal.replace(/"/g, '&quot;')}" placeholder="e.g. 3">
-                </div>
-                <div class="qa-input-field">
-                    <label>Evidence Timespan</label>
-                    <input type="text" class="qa-edit-ev" value="${evVal}" placeholder="e.g. 00:00:00 - 00:00:10">
-                </div>
-                <div class="qa-input-row-flex">
-                    <div class="qa-input-field">
-                        <label>Reasoning Type</label>
-                        <select class="qa-edit-reason">
-                            <option value="counting" ${reasonVal === 'counting' ? 'selected' : ''}>Counting</option>
-                            <option value="presence-absence" ${reasonVal === 'presence-absence' ? 'selected' : ''}>Presence/Absence</option>
-                            <option value="spatial-temporal" ${reasonVal === 'spatial-temporal' ? 'selected' : ''}>Spatial-Temporal</option>
-                            <option value="low-light-robustness" ${reasonVal === 'low-light-robustness' ? 'selected' : ''}>Low-Light Robustness</option>
-                            <option value="summary-description" ${reasonVal === 'summary-description' ? 'selected' : ''}>Summary/Description</option>
-                        </select>
-                    </div>
-                    <div class="qa-input-field">
-                        <label>Difficulty</label>
-                        <select class="qa-edit-diff">
-                            <option value="easy" ${diffVal === 'easy' ? 'selected' : ''}>Easy</option>
-                            <option value="medium" ${diffVal === 'medium' ? 'selected' : ''}>Medium</option>
-                            <option value="hard" ${diffVal === 'hard' ? 'selected' : ''}>Hard</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-            <button type="button" class="qa-row-delete-btn" title="Delete QA pair">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="19"></line><line x1="6" y1="6" x2="18" y2="19"></line></svg>
-            </button>
-        `;
-        
-        row.querySelector('.qa-row-delete-btn').addEventListener('click', () => {
-            row.remove();
-            if (container.children.length === 0) {
-                container.innerHTML = '<p class="empty-hint" style="color:var(--text-secondary);padding:1rem;">No QA pairs yet. Click Add to create one.</p>';
-            }
-        });
-        
-        container.appendChild(row);
-    }
 
     // Form submission
     const form = document.getElementById('upload-form');
@@ -1285,13 +1164,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const activeQaCategories = [];
         if (document.getElementById('qa_counting').checked) activeQaCategories.push('counting');
-        if (document.getElementById('qa_negative').checked) activeQaCategories.push('negative');
-        if (document.getElementById('qa_ambiguity').checked) activeQaCategories.push('ambiguity');
-        if (document.getElementById('qa_day_night').checked) activeQaCategories.push('day_night');
-        
-        if (captionsVal || questionsVal || isAutoGenCaptions) {
-            activeQaCategories.push('user_queries');
-        }
+        // qa_negative, qa_ambiguity, qa_day_night are disabled — only counting is active
 
         formData.set('generate_qa', activeQaCategories.length > 0 ? 'true' : 'false');
         formData.set('qa_categories', activeQaCategories.join(','));
@@ -2261,40 +2134,15 @@ document.addEventListener('DOMContentLoaded', () => {
         saveVerifiedBtn.addEventListener('click', async () => {
             if (!currentComparisonVideo) return;
             
-            // Gather counts
-            const verified_counts = {};
+            // Gather ground truth counts from input fields
+            const ground_truth_counts = {};
             document.querySelectorAll('.verified-count-input').forEach(input => {
                 const cls = input.dataset.class;
                 const val = parseInt(input.value, 10);
-                verified_counts[cls] = isNaN(val) ? 0 : val;
+                ground_truth_counts[cls] = isNaN(val) ? 0 : val;
             });
             
-            // Gather QA pairs
-            const verified_qa = [];
-            document.querySelectorAll('.qa-verified-row-card').forEach(row => {
-                const question = row.querySelector('.qa-edit-q').value.trim();
-                const answer = row.querySelector('.qa-edit-a').value.trim();
-                const evidence = row.querySelector('.qa-edit-ev').value.trim();
-                const reasoning = row.querySelector('.qa-edit-reason').value;
-                const difficulty = row.querySelector('.qa-edit-diff').value;
-                
-                if (question && answer) {
-                    verified_qa.push({
-                        "Question": question,
-                        "Answer": answer,
-                        "Answer format": answer.toLowerCase() === 'yes' || answer.toLowerCase() === 'no' ? 'yes-no' : 'open-ended',
-                        "Evidence spans the video": evidence,
-                        "Reasoning type": reasoning,
-                        "Difficulty level": difficulty,
-                        "Visibility quality": "clear",
-                        "Day or night tag": "day",
-                        "Trajectory linkage": null,
-                        "Unanswerable flag": false
-                    });
-                }
-            });
-            
-            const captions = document.getElementById('compare-external-captions').value.trim();
+            const ground_truth_context = document.getElementById('compare-external-captions').value.trim();
             
             try {
                 const res = await fetch('/api/save-verified', {
@@ -2302,14 +2150,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         video_name: currentComparisonVideo,
-                        verified_counts: verified_counts,
-                        verified_qa: verified_qa,
-                        verified_captions: captions
+                        ground_truth_counts,
+                        ground_truth_context
                     })
                 });
                 
-                if (!res.ok) throw new Error('Failed to save verified data');
-                alert('Verified results successfully saved! Detections and QAs are now 100% accurate.');
+                if (!res.ok) throw new Error('Failed to save ground truth data');
+                alert('Ground truth saved successfully!');
                 loadHistory();
             } catch (err) {
                 alert('Error saving: ' + err.message);
@@ -2317,50 +2164,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const compareRegenQaBtn = document.getElementById('compare-regenerate-qa-btn');
-    if (compareRegenQaBtn) {
-        compareRegenQaBtn.addEventListener('click', async () => {
-            if (!currentComparisonVideo || !currentComparisonData) return;
-            const captions = document.getElementById('compare-external-captions').value.trim();
-            if (!captions) {
-                alert('Please enter a description caption first to regenerate QAs.');
-                return;
-            }
-            
-            compareRegenQaBtn.disabled = true;
-            compareRegenQaBtn.textContent = 'Regenerating QAs...';
-            
-            try {
-                const run = currentComparisonData.runs[0];
-                if (!run) throw new Error('No runs found to regenerate QA for.');
-                
-                const res = await fetch('/api/qa-regenerate', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        folder: run.folder,
-                        captions: captions,
-                        qa_categories: 'counting,negative,ambiguity,day_night,user_queries',
-                        vlm_model: document.getElementById('compare-vlm-model')?.value || 'none',
-                        gemini_api_key: document.getElementById('compare-gemini-key')?.value || '',
-                        vlm_api_url: document.getElementById('compare-vlm-api-url')?.value || '',
-                        vlm_api_key: document.getElementById('compare-vlm-api-key')?.value || '',
-                        vlm_model_id: document.getElementById('compare-vlm-model-id')?.value || ''
-                    })
-                });
-                
-                if (!res.ok) throw new Error('Regeneration request failed.');
-                
-                alert('QA pairs regenerated successfully! Loading new QAs...');
-                loadComparisonDashboard(currentComparisonVideo);
-            } catch (err) {
-                alert('Error: ' + err.message);
-            } finally {
-                compareRegenQaBtn.disabled = false;
-                compareRegenQaBtn.textContent = 'Regenerate QAs using LLM';
-            }
-        });
-    }
+    // compareRegenQaBtn removed — QA regeneration via LLM is no longer available
+    // The QA system is now purely rule-based (counting only)
 
     // Load history on startup
     loadHistory();

@@ -1,24 +1,7 @@
 import re
 from core.counting import count_unique_tracks, aggregate_video_stats
+from core.constants import CLASS_SYNONYMS, VEHICLE_CLASSES
 from utils.time_utils import timestamp_to_seconds
-
-CLASS_SYNONYMS = {
-    "person": ["person", "people", "pedestrian", "pedestrians", "walker", "walkers", "man", "woman", "men", "women"],
-    "car": ["car", "cars"],
-    "truck": ["truck", "trucks"],
-    "bus": ["bus", "buses"],
-    "motorcycle": ["motorcycle", "motorcycles", "motorbike", "motorbikes"],
-    "bicycle": ["bicycle", "bicycles", "bike", "bikes"],
-    "dog": ["dog", "dogs", "puppy", "puppies"],
-    "cat": ["cat", "cats", "kitten", "kittens"],
-    "traffic light": ["traffic light", "traffic lights"],
-    "traffic sign": ["traffic sign", "traffic signs", "stop sign", "stop signs"],
-    "bench": ["bench", "benches"],
-    "fire hydrant": ["fire hydrant", "fire hydrants"],
-    "stroller": ["stroller", "strollers", "baby carriage"]
-}
-
-VEHICLE_CLASSES = ["car", "truck", "bus", "motorcycle", "bicycle"]
 
 def parse_time_span(span_str: str) -> tuple[float, float]:
     """Parses a time span string like '00:00:00 - 00:00:10' into (start_s, end_s)."""

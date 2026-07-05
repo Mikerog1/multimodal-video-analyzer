@@ -1,20 +1,10 @@
 from dataclasses import dataclass, field
 
 from utils.time_utils import seconds_to_timestamp, timestamp_to_seconds
+from core.constants import CLASS_TO_OBJECT_TYPE
 
 
 TRACKER = "bytetrack.yaml"
-CLASS_TO_OBJECT_TYPE = {
-    "person": "person",
-    "car": "car",
-    "truck": "truck",
-    "bicycle": "bicycle",
-    "boat": "boat/ship",
-    "airplane": "plane",
-    "dog": "dog",
-    "cat": "cat",
-    "bird": "bird",
-}
 
 
 @dataclass
@@ -132,11 +122,13 @@ class SimpleTracker:
     """
 
     def __init__(self, iou_threshold: float = 0.15, max_age_seconds: float = 3.0,
-                 distance_threshold: float = 200.0):
+                 distance_threshold: float = None, distance_ratio: float = 0.1):
         self._next_id = 0
         self._iou_threshold = iou_threshold
         self._max_age_seconds = max_age_seconds
-        self._distance_threshold = distance_threshold
+        self._distance_threshold = distance_threshold  # absolute override
+        self._distance_ratio = distance_ratio           # fraction of frame diagonal
+        self._frame_diagonal = None                     # computed on first update
         # Active track state: id -> {"box": [x1,y1,x2,y2], "object_type": str, "last_seen": float}
         self._active: dict[int, dict] = {}
 
@@ -165,6 +157,20 @@ class SimpleTracker:
         ]
         for tid in stale_ids:
             del self._active[tid]
+
+        # Compute frame diagonal from detections for relative distance threshold
+        if self._frame_diagonal is None and raw_detections:
+            max_x = max((d["box"][2] for d in raw_detections), default=1280)
+            max_y = max((d["box"][3] for d in raw_detections), default=720)
+            self._frame_diagonal = (max_x ** 2 + max_y ** 2) ** 0.5
+
+        # Effective distance threshold: explicit override or ratio-based
+        if self._distance_threshold is not None:
+            eff_distance = self._distance_threshold
+        elif self._frame_diagonal is not None:
+            eff_distance = self._distance_ratio * self._frame_diagonal
+        else:
+            eff_distance = 200.0  # fallback
 
         debug_detections: list[DebugDetection] = []
         matched_det_indices: set[int] = set()
@@ -214,7 +220,7 @@ class SimpleTracker:
                     best_dist = dist
                     best_idx = idx
 
-            if best_idx != -1 and best_dist < self._distance_threshold:
+            if best_idx != -1 and best_dist < eff_distance:
                 self._apply_match(
                     track_id, raw_detections[best_idx], current_time_seconds,
                     screen_time_increment, tracked_objects, debug_detections,

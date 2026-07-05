@@ -14,5 +14,21 @@ def seconds_to_timestamp(seconds: float) -> str:
 
 
 def timestamp_to_seconds(value: str) -> float:
-    h, m, s, ms = value.split(":")
-    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+    """Convert a timestamp string to seconds.
+
+    Supported formats:
+        HH:MM:SS:MS  → e.g. "00:01:30:500"
+        HH:MM:SS     → e.g. "00:01:30"
+        MM:SS        → e.g. "01:30"
+    """
+    parts = value.split(":")
+    try:
+        if len(parts) == 4:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) + int(parts[3]) / 1000.0
+        elif len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+    except ValueError:
+        pass
+    return 0.0

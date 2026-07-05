@@ -252,15 +252,9 @@ def run_analysis_single(
     generate_video: bool = True,
     progress_callback=None,
     captions: str = None,
-    example_questions: str = None,
     custom_detector_id: str = None,
     detector_api_url: str = None,
     detector_api_key: str = None,
-    vlm_model: str = "none",
-    gemini_api_key: str = None,
-    vlm_api_url: str = None,
-    vlm_api_key: str = None,
-    vlm_model_id: str = None,
 ):
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -323,11 +317,6 @@ def run_analysis_single(
         write_json=generate_json,
         generate_video=generate_video,
         captions=captions,
-        example_questions=example_questions,
-        gemini_api_key=gemini_api_key,
-        custom_vlm_url=vlm_api_url,
-        custom_vlm_key=vlm_api_key,
-        custom_vlm_model_id=vlm_model_id,
     )
     
     current_folders = set(os.listdir(output_dir))
@@ -397,16 +386,10 @@ def run_analysis(
     hf_file_path: str = None,
     hf_token: str = None,
     captions: str = None,
-    example_questions: str = None,
     auto_generate_captions: bool = False,
     custom_detector_id: str = None,
     detector_api_url: str = None,
     detector_api_key: str = None,
-    vlm_model: str = "none",
-    gemini_api_key: str = None,
-    vlm_api_url: str = None,
-    vlm_api_key: str = None,
-    vlm_model_id: str = None,
 ):
     try:
         if hf_repo_id and hf_file_path:
@@ -426,21 +409,11 @@ def run_analysis(
             )
             tasks[task_id]["filename"] = os.path.basename(video_path)
 
-        # Generate captions using selected VLM if requested or auto-generate is enabled
-        if not captions or not captions.strip():
-            if auto_generate_captions or vlm_model in ("qwen", "gemini", "custom_vlm"):
-                if vlm_model == "gemini" and gemini_api_key:
-                    tasks[task_id]["status"] = "generating_captions"
-                    tasks[task_id]["progress"] = 0
-                    captions = generate_captions_with_gemini(video_path, gemini_api_key)
-                elif vlm_model == "custom_vlm" and vlm_api_url:
-                    tasks[task_id]["status"] = "generating_captions"
-                    tasks[task_id]["progress"] = 0
-                    captions = generate_captions_with_custom_vlm(video_path, vlm_api_url, vlm_api_key, vlm_model_id)
-                else:
-                    tasks[task_id]["status"] = "generating_captions"
-                    tasks[task_id]["progress"] = 0
-                    captions = generate_captions_with_qwen(video_path)
+        # Auto-generate captions via local Qwen VLM if requested and no captions provided
+        if auto_generate_captions and (not captions or not captions.strip()):
+            tasks[task_id]["status"] = "generating_captions"
+            tasks[task_id]["progress"] = 0
+            captions = generate_captions_with_qwen(video_path)
 
         if model_type == "all":
             models_to_run = [
@@ -480,11 +453,6 @@ def run_analysis(
                     generate_video=generate_video,
                     progress_callback=sub_progress,
                     captions=captions,
-                    example_questions=example_questions,
-                    gemini_api_key=gemini_api_key,
-                    vlm_api_url=vlm_api_url,
-                    vlm_api_key=vlm_api_key,
-                    vlm_model_id=vlm_model_id,
                 )
                 last_results = tasks[task_id]["results"]
                 
@@ -512,15 +480,9 @@ def run_analysis(
                 generate_json=generate_json,
                 generate_video=generate_video,
                 captions=captions,
-                example_questions=example_questions,
                 custom_detector_id=custom_detector_id,
                 detector_api_url=detector_api_url,
                 detector_api_key=detector_api_key,
-                vlm_model=vlm_model,
-                gemini_api_key=gemini_api_key,
-                vlm_api_url=vlm_api_url,
-                vlm_api_key=vlm_api_key,
-                vlm_model_id=vlm_model_id,
             )
             tasks[task_id]["status"] = "completed"
             
@@ -621,16 +583,10 @@ async def analyze_video(
     mask_persons: bool = Form(False),
     generate_video: bool = Form(True),
     captions: str = Form(None),
-    example_questions: str = Form(None),
     auto_generate_captions: bool = Form(False),
     custom_detector_id: str = Form(None),
     detector_api_url: str = Form(None),
     detector_api_key: str = Form(None),
-    vlm_model: str = Form("none"),
-    gemini_api_key: str = Form(None),
-    vlm_api_url: str = Form(None),
-    vlm_api_key: str = Form(None),
-    vlm_model_id: str = Form(None),
 ):
     save_sampled_only = str_to_bool(save_sampled_only)
     generate_qa = str_to_bool(generate_qa)
@@ -696,16 +652,10 @@ async def analyze_video(
         hf_file_path,
         hf_token,
         captions,
-        example_questions,
         auto_generate_captions,
         custom_detector_id,
         detector_api_url,
         detector_api_key,
-        vlm_model,
-        gemini_api_key,
-        vlm_api_url,
-        vlm_api_key,
-        vlm_model_id,
     )
     
     return {"task_id": task_id, "status": "pending"}
@@ -1103,7 +1053,6 @@ async def regenerate_qa(request: Request):
         folder = body.get("folder", "")
         captions = body.get("captions")
         example_questions = body.get("example_questions")
-        qa_categories = body.get("qa_categories", "")
         
         # Parse VLM configuration details from request body
         vlm_model = body.get("vlm_model", "none")
@@ -1149,15 +1098,16 @@ async def regenerate_qa(request: Request):
         duration = meta.get("duration_seconds", 0.0)
 
         # Build processed_frames from objects' bbox_observations
-        from core.qa_generator import QAGenerator, parse_timestamp_to_seconds
+        from core.qa_generator import QAGenerator
         from utils.report_generator import save_qa_report
+        from utils.time_utils import timestamp_to_seconds as _ts_to_sec
 
         frames_by_timestamp = {}
         for obj in objects:
             obj_type = obj.get("object_type", "unknown")
             for obs in obj.get("bbox_observations", []):
                 ts_str = obs.get("timestamp", "00:00:00")
-                ts_sec = parse_timestamp_to_seconds(ts_str)
+                ts_sec = _ts_to_sec(ts_str)
 
                 if ts_sec not in frames_by_timestamp:
                     frames_by_timestamp[ts_sec] = []
@@ -1226,10 +1176,7 @@ async def regenerate_qa(request: Request):
         video_file = analyzed_video or original_video or any_video
         video_path = os.path.join(run_path, video_file) if video_file else None
 
-        qa_cats = [c.strip() for c in qa_categories.split(',')] if qa_categories else ["counting", "negative", "ambiguity", "day_night"]
-        if captions or example_questions:
-            if "user_queries" not in qa_cats:
-                qa_cats.append("user_queries")
+        qa_cats = ["counting"]
 
         from core.verifier import verify_all_qa
         qa_generator = QAGenerator(
@@ -1240,11 +1187,6 @@ async def regenerate_qa(request: Request):
             video_path=video_path,
             qa_categories=qa_cats,
             captions=captions,
-            example_questions=example_questions,
-            gemini_api_key=gemini_api_key,
-            custom_vlm_url=vlm_api_url,
-            custom_vlm_key=vlm_api_key,
-            custom_vlm_model_id=vlm_model_id,
         )
         qa_by_category = qa_generator.generate_qa_pairs()
         qa_by_category = verify_all_qa(qa_by_category, tracked_objects)
@@ -1451,7 +1393,13 @@ async def video_comparison(video_name: str, consensus_method: str = "average"):
     if os.path.isfile(verified_file):
         try:
             with open(verified_file, "r", encoding="utf-8") as vf:
-                verified_data = py_json.load(vf)
+                raw = py_json.load(vf)
+                # Support both old key format (verified_*) and new (ground_truth_*)
+                verified_data = {
+                    "ground_truth_counts": raw.get("ground_truth_counts") or raw.get("verified_counts", {}),
+                    "ground_truth_context": raw.get("ground_truth_context") or raw.get("verified_captions", ""),
+                    "updated_at": raw.get("updated_at", ""),
+                }
         except Exception:
             pass
             
@@ -1473,16 +1421,20 @@ async def save_verified(request: Request):
         verified_dir = os.path.join(output_dir, f"verified_{video_name}")
         os.makedirs(verified_dir, exist_ok=True)
         
+        # Accept both key formats for backwards compatibility
+        ground_truth_counts = body.get("ground_truth_counts") or body.get("verified_counts", {})
+        ground_truth_context = body.get("ground_truth_context") or body.get("verified_captions", "")
+        
         verified_file = os.path.join(verified_dir, "verified_report.json")
         with open(verified_file, "w", encoding="utf-8") as f:
             py_json.dump({
                 "video_name": video_name,
-                "verified_counts": body.get("verified_counts", {}),
-                "verified_qa": body.get("verified_qa", []),
+                "ground_truth_counts": ground_truth_counts,
+                "ground_truth_context": ground_truth_context,
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime())
             }, f, indent=2, ensure_ascii=False)
             
-        return {"status": "success", "message": f"Verified report saved for {video_name}"}
+        return {"status": "success", "message": f"Ground truth saved for {video_name}"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
