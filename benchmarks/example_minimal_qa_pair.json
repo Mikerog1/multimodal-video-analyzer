@@ -1,0 +1,29 @@
+{
+  "id": "qa_0001",
+  "video_id": "karlsruhe_run_day_001",
+  "question": "Is there a bicycle visible in this segment?",
+  "answer": true,
+  "answer_format": "yes_no",
+  "family": "negative_absence",
+  "reasoning_types": [
+    "absence_detection"
+  ],
+  "difficulty": "easy",
+  "visibility": "clear",
+  "day_night": "day",
+  "evidence_spans": [
+    {
+      "start_seconds": 4.2,
+      "end_seconds": 6.8,
+      "start_frame": null,
+      "end_frame": null,
+      "description": "A bicycle is visible near the right side of the path."
+    }
+  ],
+  "trajectory_linkage": null,
+  "choices": [],
+  "answer_aliases": [
+    "yes"
+  ],
+  "unanswerable": false
+}
